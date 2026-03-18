@@ -1,3 +1,4 @@
+pygame
 pytest
 setuptools
 wheel
