@@ -21,6 +21,9 @@ class Game:
         # Rendering helper
         self.graphics = Graphics(self, self.screen)
 
+        # Center on Montevideo at startup
+        self.graphics.center_on_province_id(1)
+
     def run(self) -> None:
         clock = pygame.time.Clock()
         running = True
@@ -29,6 +32,20 @@ class Game:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_LEFT]:
+                self.graphics.move(-20 / max(self.graphics.camera_scale, 0.0001), 0)
+            if keys[pygame.K_RIGHT]:
+                self.graphics.move(20 / max(self.graphics.camera_scale, 0.0001), 0)
+            if keys[pygame.K_UP]:
+                self.graphics.move(0, 20 / max(self.graphics.camera_scale, 0.0001))
+            if keys[pygame.K_DOWN]:
+                self.graphics.move(0, -20 / max(self.graphics.camera_scale, 0.0001))
+            if keys[pygame.K_EQUALS] or keys[pygame.K_PLUS]:
+                self.graphics.zoom(1.1)
+            if keys[pygame.K_MINUS]:
+                self.graphics.zoom(0.9)
 
             self.graphics.draw()
             clock.tick(60)

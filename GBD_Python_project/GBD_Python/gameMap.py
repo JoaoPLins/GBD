@@ -43,4 +43,26 @@ class Map():
         """Return the province dict with the given id, or None if not found."""
         return self._province_index.get(province_id)
 
+    def get_bbox(self, province=None):
+        """Return the bounding box for the given province or the whole map.
+
+        Returns (min_x, min_y, max_x, max_y) or None if there are no coordinates.
+        """
+        pts = []
+
+        if province is None:
+            for prov in self.provinces:
+                for poly in prov["polygons"]:
+                    pts.extend(poly)
+        else:
+            for poly in province["polygons"]:
+                pts.extend(poly)
+
+        if not pts:
+            return None
+
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        return min(xs), min(ys), max(xs), max(ys)
+
     
