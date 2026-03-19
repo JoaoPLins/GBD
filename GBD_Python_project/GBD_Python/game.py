@@ -1,18 +1,38 @@
+import pygame
 from pathlib import Path
-from map import Map
+
+from gameMap import Map
+from gameGraphics import Graphics
 
 
-class Game():
-    def __init__(self):
+class Game:
+    def __init__(self, width: int = 800, height: int = 600, title: str = "GBD"):
+        pygame.init()
+
+        # Window/screen setup
+        self.screen = pygame.display.set_mode((width, height))
+        pygame.display.set_caption(title)
+
+        # Load game data
         self.map = Map(0, 0)
         geojson_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "provinces.geojson"
         self.map.load_provinces(str(geojson_path))
-        self.test = self.map.get_all_provinces()
-        print(self.test)
-        self.test = self.map.get_province_by_id(1)
-        print(self.test)
+
+        # Rendering helper
+        self.graphics = Graphics(self, self.screen)
+
+    def run(self) -> None:
+        clock = pygame.time.Clock()
+        running = True
+
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+
+            self.graphics.draw()
+            clock.tick(60)
+
+        pygame.quit()
 
 
-
-
-game = Game()
