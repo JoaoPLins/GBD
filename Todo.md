@@ -4,7 +4,7 @@
 - Create a map of **South America** with provinces. ✅
 
 ## B. Import Map into QGIS
-Create a **shapefile layer for provinces** with the following attributes:
+Create a **shapefile layer for provinces** with the following attributes:✅
 
 | Field | Description |
 |------|-------------|
@@ -26,7 +26,7 @@ Create a **shapefile layer for provinces** with the following attributes:
 Additional attributes may be added later if needed.
 
 ## C. First Prototype
-- Load the map into the game.
+- Load the map into the game.✅
 - Implement **province collision detection**.
 
 ## D. Gameplay Prototype
