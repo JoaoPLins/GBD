@@ -2,4 +2,5 @@ pygame
 pytest
 setuptools
 wheel
+shapely
 # TODO: update the necessary requirements to develop this package

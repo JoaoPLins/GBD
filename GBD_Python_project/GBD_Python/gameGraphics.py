@@ -69,6 +69,16 @@ class Graphics:
 
         return int(sx), int(sy)
 
+    def screen_to_world(self, sx: int, sy: int) -> Tuple[float, float]:
+        """Transform a point in screen coordinates to world coordinates."""
+        screen_w, screen_h = self.screen.get_size()
+        ox, oy = self.camera_origin
+
+        x = (sx - screen_w * 0.5) / self.camera_scale + ox
+        y = (screen_h * 0.5 - sy) / self.camera_scale + oy
+
+        return x, y
+
     def draw(self):
         # Clear the screen with a background color (e.g., white)
         self.screen.fill((255, 255, 255))

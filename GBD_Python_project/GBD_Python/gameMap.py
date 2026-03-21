@@ -1,4 +1,5 @@
 import json
+from shapely.geometry import Point, Polygon
 
 class Map():
     def __init__(self, center_x, center_y):
@@ -64,5 +65,15 @@ class Map():
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         return min(xs), min(ys), max(xs), max(ys)
+
+    def get_province_at_point(self, x: float, y: float):
+        """Return the province that contains the given point (x, y), or None if no province contains it."""
+        point = Point(x, y)
+        for province in self.provinces:
+            for polygon_coords in province["polygons"]:
+                polygon = Polygon(polygon_coords)
+                if polygon.contains(point):
+                    return province
+        return None
 
     
