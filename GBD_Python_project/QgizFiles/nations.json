@@ -1,0 +1,62 @@
+{
+  "nations": [
+    {
+      "tag": "BRA",
+      "name": "Brazil",
+      "type": "nation",
+      "color": "(34, 139, 34)",
+      "government": "federal presidential constitutional republic",
+      "parties": ["RGS", "Cafe", "leite"],
+      "substates": ["RGS"],
+      "capital": "Rio de Janeiro",
+      "flag": "art/Bra.png"
+    },
+    {
+      "tag": "ARG",
+      "name": "Argentina",
+      "type": "nation",
+      "color": "(140, 200, 255)",
+      "government": "federal presidential constitutional republic",
+      "parties": ["arg1", "arg2", "arg3"],
+      "substates": ["COR", "ETR"],
+      "capital": "Buenos Aires",
+      "flag": "art/Arg.png"
+    },
+    {
+      "tag": "URU",
+      "name": "Uruguay",
+      "type": "nation",
+      "color": "(140, 80, 200)",
+      "government": "federal presidential constitutional republic",
+      "parties": ["uru1", "uru2", "uru3"],
+      "substates": [],
+      "capital": "Montevideo",
+      "flag": "art/Uru.png"
+    },
+    {
+      "tag": "COR",
+      "name": "Corrientes",
+      "type": "province",
+      "color": "(140, 200, 255)",
+      "parent": "ARG",
+      "flag": "art/COR.png"
+
+    },
+    {
+      "tag": "ETR",
+      "name": "Entre Ríos",
+      "type": "province",
+      "color": "(140, 200, 255)",
+      "parent": "ARG" ,
+      "flag": "art/ETR.png"
+    },
+    {
+      "tag": "RGS",
+      "name": "Rio Grande do Sul",
+      "type": "state",
+      "color": "(245, 210, 70)",
+      "parent": "BRA",
+      "flag": "art/RGS.png"
+    }
+  ]
+}

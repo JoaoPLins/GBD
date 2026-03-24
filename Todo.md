@@ -27,7 +27,7 @@ Additional attributes may be added later if needed.
 
 ## C. First Prototype
 - Load the map into the game.✅
-- Implement **province collision detection**.
+- Implement **province collision detection**.✅
 
 ## D. Gameplay Prototype
 - Create **units**.

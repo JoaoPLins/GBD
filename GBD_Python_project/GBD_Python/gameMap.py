@@ -1,4 +1,5 @@
 import json
+import csv
 from shapely.geometry import Point, Polygon
 
 class Map():
@@ -8,7 +9,7 @@ class Map():
         self.provinces = []
         self._province_index = {}
 
-    def load_provinces(self, geojson_file):
+    def load_provinces(self, geojson_file, nearby_csv_file=None):
         with open(geojson_file, encoding="utf-8") as f:
             data = json.load(f)
 
@@ -29,11 +30,35 @@ class Map():
                 "id": props["id"],
                 "polygons": polygons,
                 "terrain": props["terrain"],
-                "is_water": props["is_water"]
+                "is_water": props["is_water"],
+                "owner": props["owner"],
+                "controler": props["controler"],
+                "nearby_provinces": []
             }
 
             self.provinces.append(province)
             self._province_index[province["id"]] = province
+        
+        # Load nearby provinces if CSV file is provided
+        if nearby_csv_file:
+            self._load_nearby_from_csv(nearby_csv_file)
+    
+    def _load_nearby_from_csv(self, csv_file):
+        """Load nearby provinces data from a CSV file."""
+        with open(csv_file, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                province_id = int(row["province_id"])
+                nearby = row["nearby_provinces"].strip()
+                
+                if nearby:
+                    nearby_ids = [int(id_str) for id_str in nearby.split(",")]
+                else:
+                    nearby_ids = []
+                
+                province = self.get_province_by_id(province_id)
+                if province:
+                    province["nearby_provinces"] = nearby_ids
     
     def get_all_provinces(self):
         """Return a list of all loaded provinces."""
@@ -76,4 +101,16 @@ class Map():
                     return province
         return None
 
-    
+    def get_nearby_provinces(self, province_id):
+        """Return a list of nearby province dicts for the given province ID."""
+        province = self.get_province_by_id(province_id)
+        if not province:
+            return []
+        
+        nearby = []
+        for nearby_id in province.get("nearby_provinces", []):
+            nearby_province = self.get_province_by_id(nearby_id)
+            if nearby_province:
+                nearby.append(nearby_province)
+        
+        return nearby

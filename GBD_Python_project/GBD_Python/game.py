@@ -1,5 +1,6 @@
 import pygame
 from pathlib import Path
+from nations import NationManager
 
 from gameMap import Map
 from gameGraphics import Graphics
@@ -17,10 +18,15 @@ class Game:
         self.map = Map(0, 0)
         self.running = True
         geojson_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "provinces.geojson"
-        self.map.load_provinces(str(geojson_path))
+        nearby_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nearby_provinces.csv"
+        self.map.load_provinces(str(geojson_path), str(nearby_csv_path))
+        self.nation_manager = NationManager()
+        nations_json_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nations.json"
+        self.nation_manager.load_from_json(str(nations_json_path))
 
         # Rendering helper
-        self.graphics = Graphics(self, self.screen)
+        art_path = Path(__file__).resolve().parent.parent / "Art"
+        self.graphics = Graphics(self, self.screen, str(art_path))
 
         # Center on Montevideo at startup
         self.graphics.center_on_province_id(1)
