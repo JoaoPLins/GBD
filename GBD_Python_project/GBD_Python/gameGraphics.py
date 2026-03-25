@@ -300,6 +300,77 @@ class Graphics:
         if lines_drawn == 0:
             print("WARNING: No nearby province lines drawn - check if nearby_provinces data is loaded")
 
+    def _get_unit_color(self, unit) -> Tuple[int, int, int]:
+        """Get the color of a unit based on its nation."""
+        manager = getattr(self.game, "nation_manager", None)
+        if manager is None:
+            return (100, 100, 100)
+        
+        nation = manager.get_nation(unit.nation)
+        if nation is None:
+            return (100, 100, 100)
+        
+        rgb = self._parse_rgb_color(nation.extra.get("color"))
+        if rgb is not None:
+            return rgb
+        
+        return (100, 100, 100)
+    
+    def _get_unit_screen_position(self, unit):
+        """Get the screen position of a unit based on its location (province ID)."""
+        province = self.game.map.get_province_by_id(unit.location)
+        if province is None:
+            return None
+        
+        center = self._get_province_center(province)
+        screen_pos = self.world_to_screen(center[0], center[1])
+        return screen_pos
+    
+    def draw_units(self) -> None:
+        """Draw all units on the map as 20x20 colored squares."""
+        unit_size = 20
+        half_size = unit_size // 2
+        
+        armies = getattr(self.game, "armies", {})
+        if not armies:
+            return
+        
+        for army in armies.values():
+            for unit in army.get_all_units():
+                pos = self._get_unit_screen_position(unit)
+                if pos is None:
+                    continue
+                
+                sx, sy = pos
+                color = self._get_unit_color(unit)
+                
+                rect = pygame.Rect(sx - half_size, sy - half_size, unit_size, unit_size)
+                pygame.draw.rect(self.screen, color, rect)
+                pygame.draw.rect(self.screen, (0, 0, 0), rect, 2)
+    
+    def get_unit_at_point(self, wx: float, wy: float):
+        """Get the unit at a given world position, if any."""
+        unit_size = 20
+        half_size = unit_size // 2
+        test_sx, test_sy = self.world_to_screen(wx, wy)
+        
+        armies = getattr(self.game, "armies", {})
+        if not armies:
+            return None
+        
+        for army in armies.values():
+            for unit in army.get_all_units():
+                pos = self._get_unit_screen_position(unit)
+                if pos is None:
+                    continue
+                
+                sx, sy = pos
+                rect = pygame.Rect(sx - half_size, sy - half_size, unit_size, unit_size)
+                if rect.collidepoint(test_sx, test_sy):
+                    return unit
+        
+        return None
+
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)
         self.screen.fill((255, 255, 255))
@@ -320,6 +391,9 @@ class Graphics:
         # Draw nearby province connections on top if enabled
         if debug_draw_connections:
             self.draw_nearby_connections()
+
+        # Draw units on top of everything
+        self.draw_units()
 
         # Update the display
         pygame.display.flip()

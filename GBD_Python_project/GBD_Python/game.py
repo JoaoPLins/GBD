@@ -2,6 +2,9 @@ import pygame
 from pathlib import Path
 from nations import NationManager
 
+from units import load_starting_units
+from simulation import Simulation
+
 from gameMap import Map
 from gameGraphics import Graphics
 
@@ -23,6 +26,19 @@ class Game:
         self.nation_manager = NationManager()
         nations_json_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nations.json"
         self.nation_manager.load_from_json(str(nations_json_path))
+        
+        # Load units and armies
+        self.armies = load_starting_units()
+
+        # Simulation runs in its own thread (independent from render FPS)
+        self.simulation = Simulation(
+            nation_manager=self.nation_manager,
+            game_map=self.map,
+            armies=self.armies,
+            tick_seconds=1.0,
+            speed_multiplier=1.0,
+        )
+        self.simulation.pause()
 
         # Rendering helper
         art_path = Path(__file__).resolve().parent.parent / "Art"
@@ -54,16 +70,36 @@ class Game:
                 if event.button == 1:  # Left click
                     mx, my = event.pos
                     wx, wy = self.graphics.screen_to_world(mx, my)
-                    province = self.map.get_province_at_point(wx, wy)
-                    if province:
-                        print(f"Clicked on province {province['id']}")
+                    # Check for unit clicks first (they're on top)
+                    unit = self.graphics.get_unit_at_point(wx, wy)
+                    if unit:
+                        print(f"Clicked on unit {unit.id} (Army {unit.army}, Nation: {unit.nation})")
                     else:
-                        print("Clicked outside any province")
+                        # Then check for province clicks
+                        province = self.map.get_province_at_point(wx, wy)
+                        if province:
+                            print(f"Clicked on province {province['id']}")
+                        else:
+                            print("Clicked outside any province or unit")
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_1:
+                    self.simulation.set_speed(0.5)
+                    print("Simulation speed set to 0.5x")
+                elif event.key == pygame.K_2:
+                    self.simulation.set_speed(1.0)
+                    print("Simulation speed set to 1.0x")
+                elif event.key == pygame.K_3:
+                    self.simulation.set_speed(2.0)
+                    print("Simulation speed set to 2.0x")
+                elif event.key == pygame.K_SPACE:
+                    paused = self.simulation.toggle_pause()
+                    print(f"Simulation {'paused' if paused else 'resumed'}")
         return True
     
     
     def run(self) -> None:
         clock = pygame.time.Clock()
+        self.simulation.start()
         
 
         while self.running:
@@ -75,6 +111,8 @@ class Game:
             
             clock.tick(60)
 
+        self.simulation.stop()
+        self.simulation.join(timeout=1.0)
         pygame.quit()
 
     

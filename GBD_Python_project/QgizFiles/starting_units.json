@@ -1,0 +1,31 @@
+{ 
+    "starting_units": {
+        "unit1": {
+            "name": "Infantry",
+            "nation": "URU",
+            "location": 1,
+            "home": 1,
+            "army": 1,
+            "soldiers": 100,
+            "attack": 10,
+            "defense": 5,
+            "speed": 1,
+            "logistics": 1,
+            "suply": 10            
+        },
+        "unit2": {
+            "name": "Infantry",
+            "nation": "URU",
+            "location": 2,
+            "home": 2,
+            "army": 1,
+            "soldiers": 100,
+            "attack": 10,
+            "defense": 5,
+            "speed": 1,
+            "logistics": 1,
+            "suply": 10            
+        }
+
+    }
+}
