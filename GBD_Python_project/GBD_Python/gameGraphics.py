@@ -20,9 +20,30 @@ class Graphics:
         self.base_map_pixels_per_unit: float = 1.0
         self._base_map_screen_cache: Optional[pygame.Surface] = None
         self._base_map_cache_key: Optional[Tuple[float, float, float, int, int]] = None
+        self.rbar_image: Optional[pygame.Surface] = None
+        self.ui_font: pygame.font.Font = pygame.font.Font(None, 14)
         
         # Load base map if available
         self._load_base_map()
+        self._load_ui_assets()
+
+    def _load_ui_assets(self) -> None:
+        """Load UI overlays such as Art/UI/RBar.png."""
+        candidates = [
+            self.art_path / "UI" / "RBar.png",
+            self.art_path / "ui" / "RBar.png",
+        ]
+
+        for ui_path in candidates:
+            if ui_path.exists():
+                try:
+                    self.rbar_image = pygame.image.load(str(ui_path)).convert_alpha()
+                    print(f"Loaded UI bar: {ui_path}")
+                    return
+                except Exception as e:
+                    print(f"Failed to load UI bar {ui_path}: {e}")
+
+        print("UI bar not found (expected Art/UI/RBar.png or Art/ui/RBar.png)")
 
     def _load_base_map(self) -> None:
         """Load the base map image from Art/baseMap/provincemapbase.png"""
@@ -371,6 +392,37 @@ class Graphics:
         
         return None
 
+    def _draw_ui_overlay(self) -> None:
+        """Draw top UI bar and simulation time text above map layers."""
+        screen_w, _ = self.screen.get_size()
+        bar_x = 0
+        if self.rbar_image is not None:
+            bar_w = self.rbar_image.get_width()
+            bar_x = max(0, screen_w - bar_w)
+            self.screen.blit(self.rbar_image, (bar_x, 0))
+
+        sim = getattr(self.game, "simulation", None)
+        if sim is None:
+            return
+
+        state = sim.get_state_snapshot()
+        year = state.get("current_year", 0)
+        month = state.get("current_month", 0)
+        day = state.get("current_day", 0)
+        hour = state.get("current_hour", 0)
+        speed = state.get("speed_multiplier", 1.0)
+        paused = state.get("paused", False)
+        status = "PAUSED" if paused else "RUNNING"
+
+        status_text = f"Status: {status}"
+        time_text = f"Time: {year:04d}-{month:02d}-{day:02d} {hour:02d}:00"
+        speed_text = f"Speed: x{speed:.1f}"
+
+        text_color = (245, 245, 245)
+        self.screen.blit(self.ui_font.render(status_text, True, text_color), (bar_x + 10, 4))
+        self.screen.blit(self.ui_font.render(time_text, True, text_color), (bar_x + 10, 18))
+        self.screen.blit(self.ui_font.render(speed_text, True, text_color), (bar_x + 10, 32))
+
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)
         self.screen.fill((255, 255, 255))
@@ -394,6 +446,9 @@ class Graphics:
 
         # Draw units on top of everything
         self.draw_units()
+
+        # Draw UI on top of all world elements
+        self._draw_ui_overlay()
 
         # Update the display
         pygame.display.flip()
