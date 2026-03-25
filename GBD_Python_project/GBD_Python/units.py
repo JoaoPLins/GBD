@@ -5,7 +5,7 @@ from pathlib import Path
 class Unit:
     """Represents a single military unit."""
     
-    def __init__(self, unit_id, name, nation, location, home, army, soldiers, attack, defense, speed, logistics, suply):
+    def __init__(self, unit_id, name, nation, location, home, army, soldiers, attack, defense, speed, logistics, suply, status):
         """
         Initialize a Unit.
         
@@ -22,6 +22,7 @@ class Unit:
             speed: Movement speed stat
             logistics: Logistics stat
             suply: Supply value
+            status: Status of the unit
         """
         self.id = unit_id
         self.name = name
@@ -35,6 +36,7 @@ class Unit:
         self.speed = speed
         self.logistics = logistics
         self.suply = suply
+        self.status = status
 
 
 class UnitGroup:
@@ -126,7 +128,8 @@ def load_starting_units():
             defense=unit_data['defense'],
             speed=unit_data['speed'],
             logistics=unit_data['logistics'],
-            suply=unit_data['suply']
+            suply=unit_data['suply'],
+            status=unit_data.get('status', 1)
         )
         
         # Get or create the army (UnitGroup)

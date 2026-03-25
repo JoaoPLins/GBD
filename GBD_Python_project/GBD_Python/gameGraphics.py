@@ -22,6 +22,7 @@ class Graphics:
         self._base_map_cache_key: Optional[Tuple[float, float, float, int, int]] = None
         self.rbar_image: Optional[pygame.Surface] = None
         self.ui_font: pygame.font.Font = pygame.font.Font(None, 14)
+        self._unit_portrait_cache: Dict[str, Optional[pygame.Surface]] = {}
         
         # Load base map if available
         self._load_base_map()
@@ -392,6 +393,32 @@ class Graphics:
         
         return None
 
+    def _find_unit_by_id(self, unit_id):
+        armies = getattr(self.game, "armies", {})
+        for army in armies.values():
+            unit = army.get_unit(unit_id)
+            if unit is not None:
+                return unit
+        return None
+
+    def _get_unit_portrait(self, unit) -> Optional[pygame.Surface]:
+        unit_type = str(getattr(unit, "name", "")).strip().lower()
+        if not unit_type:
+            return None
+
+        cache_key = f"{unit_type}.jpg"
+        if cache_key in self._unit_portrait_cache:
+            return self._unit_portrait_cache[cache_key]
+
+        image = self.load_image(f"picture/{unit_type}.jpg")
+        if image is None:
+            self._unit_portrait_cache[cache_key] = None
+            return None
+
+        scaled = pygame.transform.smoothscale(image, (85, 85))
+        self._unit_portrait_cache[cache_key] = scaled
+        return scaled
+
     def _draw_ui_overlay(self) -> None:
         """Draw top UI bar and simulation time text above map layers."""
         screen_w, _ = self.screen.get_size()
@@ -422,6 +449,31 @@ class Graphics:
         self.screen.blit(self.ui_font.render(status_text, True, text_color), (bar_x + 10, 4))
         self.screen.blit(self.ui_font.render(time_text, True, text_color), (bar_x + 10, 18))
         self.screen.blit(self.ui_font.render(speed_text, True, text_color), (bar_x + 10, 32))
+
+        selected_id = getattr(self.game, "unit_selected", 0)
+        if not selected_id:
+            return
+
+        unit = self._find_unit_by_id(selected_id)
+        if unit is None:
+            return
+
+        panel_x = bar_x + 10
+        panel_y = 56
+
+        portrait = self._get_unit_portrait(unit)
+        if portrait is not None:
+            self.screen.blit(portrait, (panel_x, panel_y))
+
+        # Name above portrait.
+        self.screen.blit(self.ui_font.render(f"{unit.name}", True, text_color), (panel_x, panel_y - 12))
+
+        # Rest of unit data under portrait.
+        data_y = panel_y + 88
+        self.screen.blit(self.ui_font.render(f"Unit: {unit.id}", True, text_color), (panel_x, data_y))
+        self.screen.blit(self.ui_font.render(f"Nation: {unit.nation}", True, text_color), (panel_x, data_y + 12))
+        self.screen.blit(self.ui_font.render(f"Prov: {unit.location}", True, text_color), (panel_x, data_y + 24))
+        self.screen.blit(self.ui_font.render(f"Status: {getattr(unit, 'status', 1)}", True, text_color), (panel_x, data_y + 36))
 
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)
