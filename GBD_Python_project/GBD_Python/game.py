@@ -46,6 +46,7 @@ class Game:
 
         # Center on Montevideo at startup
         self.graphics.center_on_province_id(1)
+        self.unit_selected = 0
 
     def key_handler(self) -> None:
         keys = pygame.key.get_pressed()
@@ -74,13 +75,32 @@ class Game:
                     unit = self.graphics.get_unit_at_point(wx, wy)
                     if unit:
                         print(f"Clicked on unit {unit.id} (Army {unit.army}, Nation: {unit.nation})")
+                        self.unit_selected = unit.id
                     else:
                         # Then check for province clicks
                         province = self.map.get_province_at_point(wx, wy)
                         if province:
+                            self.unit_selected = 0  # Deselect unit if clicked on a province
                             print(f"Clicked on province {province['id']}")
                         else:
                             print("Clicked outside any province or unit")
+                            self.unit_selected = 0  # Deselect unit if clicked on empty space
+                elif event.button == 3:  # Right click
+                    if self.unit_selected != 0:
+                        mx, my = event.pos
+                        wx, wy = self.graphics.screen_to_world(mx, my)
+                        province = self.map.get_province_at_point(wx, wy)
+                        if province:
+                            route = self.simulation.pathing(self.unit_selected, province["id"])
+                            if route:
+                                print(f"Queued movement for {self.unit_selected}: {route}")
+                            else:
+                                print("No valid route found.")
+                        else:
+                            print("Right click on a province to set destination.")
+                    else:
+                        print("Select a unit first with left click.")
+                    
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_1:
                     self.simulation.set_speed(0.5)
