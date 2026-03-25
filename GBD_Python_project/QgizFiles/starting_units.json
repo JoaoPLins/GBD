@@ -11,7 +11,8 @@
             "defense": 5,
             "speed": 1,
             "logistics": 1,
-            "suply": 10            
+            "suply": 10,
+            "status": 1            
         },
         "unit2": {
             "name": "Infantry",
@@ -24,7 +25,8 @@
             "defense": 5,
             "speed": 1,
             "logistics": 1,
-            "suply": 10            
+            "suply": 10,
+            "status": 1            
         }
 
     }
