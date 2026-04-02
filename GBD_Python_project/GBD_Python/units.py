@@ -1,3 +1,4 @@
+from ast import Pass
 import json
 from pathlib import Path
 
@@ -37,7 +38,100 @@ class Unit:
         self.logistics = logistics
         self.suply = suply
         self.status = status
+        self.counter = 0
 
+    def return_status(self):
+        """
+        Return what the unit is doing 
+        0 - reserve
+        1 - Active
+        2 - Quartered
+        3 - moving
+        4 - resting
+        5 - defending
+        6 - improving defenses
+        7 - securing province
+        8 - disorganized
+        """
+        if self.status == 0:
+            return "Reserve"
+        elif self.status == 1:
+            return "Active"
+        elif self.status == 2:
+            return "Quartered"
+        elif self.status == 3:
+            return "Moving"
+        elif self.status == 4:
+            return "Resting"
+        elif self.status == 5:
+            return "Defending"
+        elif self.status == 6:
+            return "Improving Defenses"
+        elif self.status == 7:
+            return "Securing Province"
+        elif self.status == 8:
+            return "Disorganized"
+        else:
+            return "Unknown Status"
+        
+    def update_status(self, new_status):
+        """
+        Update the unit's status.
+        
+        Args:
+            new_status: New status code to set for the unit
+        """
+        self.status = new_status
+
+    def update_counter(self, new_counter):
+        """
+        Update the unit's counter (used for movement or action timing).
+        
+        Args:
+            new_counter: New counter value to set for the unit
+        """
+        self.counter = new_counter
+
+        
+class MergedUnit:
+    
+    def __init__(self,id):
+        self.id = id
+        self.units = []
+
+    def add_unit(self, unit):
+        self.units.append(unit)
+    
+    def detatch_unit(self, unit_id):
+        self.units = [unit for unit in self.units if unit.id != unit_id]
+
+
+class NavyUnits:
+    def __init__(self, id, class_name, ShipName, nation, location, homedock, crew, guns, speed, suply, status, systemsHealth, HullHealth,HaulCapacity,):
+        self.id = id
+        self.unitClass = class_name
+        self.ShipName = ShipName
+        self.nation = nation
+        self.location = location
+        self.homedock = homedock
+        self.crew = crew
+        self.guns = guns
+        self.speed = speed
+        self.suply = suply
+        self.status = status
+        self.systemsHealth = systemsHealth
+        self.HullHealth = HullHealth
+        self.HaulCapacity = HaulCapacity
+        self.EngineHealth = 100
+        self.fireValue = 0
+        self.onShipyard = False
+        self.docked = True
+        self.counter = 0
+    
+    
+
+    
+        
 
 class UnitGroup:
     """Represents a group/army of units that can be managed together."""
@@ -94,6 +188,7 @@ class UnitGroup:
         """
         return list(self.units.values())
 
+    
 
 def load_starting_units():
     """

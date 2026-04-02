@@ -26,6 +26,8 @@ class Simulation(threading.Thread):
 		self.moviment_list = []
 		self.moviment_time = []
 		self.combat_list = []
+		# [unit_id, ticks_remaining] — units waiting to enter Moving status
+		self.mobilization_queue = []
 
 		self._stop_event = threading.Event()
 		self._pause_event = threading.Event()
@@ -75,7 +77,26 @@ class Simulation(threading.Thread):
 			# - self.nation_manager
 			# - self.armies
 
+		self._process_mobilization()
 		self._process_movements()
+
+	def _process_mobilization(self) -> None:
+		"""Tick down mobilization delays and promote units to Moving status when ready."""
+		with self._state_lock:
+			unit_ids = [entry[0] for entry in self.mobilization_queue if entry]
+
+		for unit_id in unit_ids:
+			with self._state_lock:
+				idx = next((i for i, e in enumerate(self.mobilization_queue) if e and e[0] == unit_id), None)
+				if idx is None:
+					continue
+				self.mobilization_queue[idx][1] -= 1
+				if self.mobilization_queue[idx][1] <= 0:
+					del self.mobilization_queue[idx]
+					unit = self._find_unit_by_id(unit_id)
+					if unit is not None:
+						unit.status = 3
+						unit.counter = 0
 
 	def _find_unit_by_id(self, unit_id):
 		"""Find a unit object across all armies by unit ID."""
@@ -93,8 +114,8 @@ class Simulation(threading.Thread):
 		except (TypeError, ValueError):
 			speed_value = 1.0
 		if speed_value <= 0:
-			return 1
-		return max(1, int(round(1.0 / speed_value)))
+			return 16
+		return max(1, int(round(16.0 / speed_value)))
 
 	def _find_movement_index(self, unit_id):
 		for idx, movement in enumerate(self.moviment_list):
@@ -168,10 +189,37 @@ class Simulation(threading.Thread):
 			if timer_idx is None or movement_idx is None:
 				return False
 
+			unit = self._find_unit_by_id(unit_id)
+			if unit is None:
+				del self.moviment_list[movement_idx]
+				del self.moviment_time[timer_idx]
+				return False
+
+			# Resting phase (status 4): count 6 ticks then resume moving
+			if unit.status == 4:
+				unit.counter += 1
+				if unit.counter >= 6:
+					unit.counter = 0
+					unit.status = 3
+				return False
+
+			# Only process movement when status is Moving (3)
+			if unit.status != 3:
+				return False
+
+			# Count moving ticks; after 8, force a rest
+			unit.counter += 1
+			if unit.counter >= 8:
+				unit.counter = 0
+				unit.status = 4
+				return False
+
+			# Decrement per-province-step timer
 			self.moviment_time[timer_idx][1] -= 1
 			if self.moviment_time[timer_idx][1] > 0:
 				return False
 
+			# Step to next province
 			movement = self.moviment_list[movement_idx]
 			if len(movement) <= 1:
 				del self.moviment_list[movement_idx]
@@ -179,12 +227,6 @@ class Simulation(threading.Thread):
 				return False
 
 			next_province_id = movement[1]
-			unit = self._find_unit_by_id(unit_id)
-			if unit is None:
-				del self.moviment_list[movement_idx]
-				del self.moviment_time[timer_idx]
-				return False
-
 			unit.location = next_province_id
 			del movement[1]
 
@@ -245,6 +287,19 @@ class Simulation(threading.Thread):
 
 			# Store movement queue as requested: [unit_id, next_province, ..., objective]
 			route_entry = [unit_id] + path[1:]
+
+			# Determine when the unit can start moving based on current status
+			if unit.status == 1:  # Active -> start moving immediately
+				unit.status = 3
+				unit.counter = 0
+			elif unit.status != 3:  # Not already moving -> apply mobilization delay
+				delay = 72 if unit.status == 0 else 12
+				# Replace any existing mobilization entry for this unit
+				mob_idx = next((i for i, e in enumerate(self.mobilization_queue) if e and e[0] == unit_id), None)
+				if mob_idx is not None:
+					self.mobilization_queue[mob_idx][1] = delay
+				else:
+					self.mobilization_queue.append([unit_id, delay])
 
 			existing_movement_idx = self._find_movement_index(unit_id)
 			existing_timer_idx = self._find_timer_index(unit_id)

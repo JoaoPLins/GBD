@@ -23,6 +23,7 @@ class Graphics:
         self.rbar_image: Optional[pygame.Surface] = None
         self.ui_font: pygame.font.Font = pygame.font.Font(None, 14)
         self._unit_portrait_cache: Dict[str, Optional[pygame.Surface]] = {}
+        self._unit_icon_cache: Dict[str, Optional[pygame.Surface]] = {}
         
         # Load base map if available
         self._load_base_map()
@@ -347,11 +348,96 @@ class Graphics:
         center = self._get_province_center(province)
         screen_pos = self.world_to_screen(center[0], center[1])
         return screen_pos
+
+    def _get_unit_draw_size(self) -> int:
+        """Scale unit marker with zoom; keep small size only when very zoomed out."""
+        # At very low zoom, keep marker compact. Otherwise ramp quickly to larger sizes.
+        if self.camera_scale <= 0.35:
+            return 20
+
+        zoom_factor = min(1.0, self.camera_scale / 4.0)
+        return int(20 + (45 * zoom_factor))
+
+    def _get_unit_type_key(self, unit) -> str:
+        raw_name = str(getattr(unit, "name", "")).strip().lower()
+        if not raw_name:
+            return "unit"
+
+        return raw_name.replace("-", "_").replace(" ", "_")
+
+    def _get_unit_icon(self, unit, size: int) -> Optional[pygame.Surface]:
+        unit_key = self._get_unit_type_key(unit)
+        cache_key = f"{unit_key}:{size}"
+        if cache_key in self._unit_icon_cache:
+            return self._unit_icon_cache[cache_key]
+
+        base_key = unit_key.split("_")[0]
+        candidates = [
+            f"ui/{unit_key}.png",
+            f"ui/{unit_key}.jpg",
+            f"ui/{base_key}.png",
+            f"ui/{base_key}.jpg",
+            "ui/unit.png",
+            "ui/default_unit.png",
+        ]
+
+        for image_path in candidates:
+            image = self.load_image(image_path)
+            if image is not None:
+                src_w, src_h = image.get_size()
+                if src_w <= 0 or src_h <= 0:
+                    continue
+
+                ratio = min(size / src_w, size / src_h)
+                target_w = max(1, int(src_w * ratio))
+                target_h = max(1, int(src_h * ratio))
+                scaled = pygame.transform.smoothscale(image, (target_w, target_h))
+                self._unit_icon_cache[cache_key] = scaled
+                return scaled
+
+        self._unit_icon_cache[cache_key] = None
+        return None
+
+    def _get_scaled_surface_to_fit(
+        self,
+        surface: pygame.Surface,
+        max_width: int,
+        max_height: int,
+    ) -> Optional[pygame.Surface]:
+        """Scale a surface to fit inside bounds while preserving aspect ratio."""
+        src_w, src_h = surface.get_size()
+        if src_w <= 0 or src_h <= 0 or max_width <= 0 or max_height <= 0:
+            return None
+
+        ratio = min(max_width / src_w, max_height / src_h)
+        target_w = max(1, int(src_w * ratio))
+        target_h = max(1, int(src_h * ratio))
+        return pygame.transform.smoothscale(surface, (target_w, target_h))
+
+    def _get_unit_stat_line(self, unit) -> str:
+        """Return compact attack/defense string shown inside large unit boxes."""
+        attack = getattr(unit, "attack", None)
+        defense = getattr(unit, "defense", None)
+        if attack is None or defense is None:
+            return ""
+        return f"{attack}|{defense}"
+
+    def _get_unit_status_text(self, unit) -> str:
+        """Return human-readable unit status for marker overlay text."""
+        status_fn = getattr(unit, "return_status", None)
+        if callable(status_fn):
+            return str(status_fn())
+
+        return str(getattr(unit, "status", ""))
     
     def draw_units(self) -> None:
-        """Draw all units on the map as 20x20 colored squares."""
-        unit_size = 20
+        """Draw all units on the map as zoom-scaled colored squares."""
+        unit_size = self._get_unit_draw_size()
         half_size = unit_size // 2
+        draw_icon = unit_size >= 40
+        show_stats = unit_size >= 55
+        status_font = pygame.font.Font(None, max(16, unit_size // 4 + 2))
+        stat_font = pygame.font.Font(None, max(18, unit_size // 4 + 4))
         
         armies = getattr(self.game, "armies", {})
         if not armies:
@@ -369,10 +455,33 @@ class Graphics:
                 rect = pygame.Rect(sx - half_size, sy - half_size, unit_size, unit_size)
                 pygame.draw.rect(self.screen, color, rect)
                 pygame.draw.rect(self.screen, (0, 0, 0), rect, 2)
+
+                if draw_icon:
+                    raw_icon = self._get_unit_icon(unit, 128)
+                    if raw_icon is not None:
+                        max_icon_w = unit_size - 6
+                        max_icon_h = int(unit_size * 0.55)
+                        icon = self._get_scaled_surface_to_fit(raw_icon, max_icon_w, max_icon_h)
+                        if icon is not None:
+                            icon_rect = icon.get_rect(midtop=(rect.centerx, rect.top + 3))
+                            self.screen.blit(icon, icon_rect)
+
+                if show_stats:
+                    status_text = self._fit_text(self._get_unit_status_text(unit), unit_size - 8)
+                    if status_text:
+                        status_surface = status_font.render(status_text, True, (235, 235, 235))
+                        status_rect = status_surface.get_rect(midbottom=(rect.centerx, rect.bottom - 17))
+                        self.screen.blit(status_surface, status_rect)
+
+                    stat_line = self._get_unit_stat_line(unit)
+                    if stat_line:
+                        stat_surface = stat_font.render(stat_line, True, (230, 230, 230))
+                        stat_rect = stat_surface.get_rect(midbottom=(rect.centerx, rect.bottom - 3))
+                        self.screen.blit(stat_surface, stat_rect)
     
     def get_unit_at_point(self, wx: float, wy: float):
         """Get the unit at a given world position, if any."""
-        unit_size = 20
+        unit_size = self._get_unit_draw_size()
         half_size = unit_size // 2
         test_sx, test_sy = self.world_to_screen(wx, wy)
         
@@ -401,12 +510,30 @@ class Graphics:
                 return unit
         return None
 
-    def _get_unit_portrait(self, unit) -> Optional[pygame.Surface]:
+    def _fit_text(self, text: str, max_width: int) -> str:
+        """Trim text with ellipsis so it fits within max_width pixels."""
+        if max_width <= 0:
+            return ""
+
+        if self.ui_font.size(text)[0] <= max_width:
+            return text
+
+        ellipsis = "..."
+        if self.ui_font.size(ellipsis)[0] > max_width:
+            return ""
+
+        trimmed = text
+        while trimmed and self.ui_font.size(f"{trimmed}{ellipsis}")[0] > max_width:
+            trimmed = trimmed[:-1]
+
+        return f"{trimmed}{ellipsis}"
+
+    def _get_unit_portrait(self, unit, size: int = 85) -> Optional[pygame.Surface]:
         unit_type = str(getattr(unit, "name", "")).strip().lower()
         if not unit_type:
             return None
 
-        cache_key = f"{unit_type}.jpg"
+        cache_key = f"{unit_type}:{size}.jpg"
         if cache_key in self._unit_portrait_cache:
             return self._unit_portrait_cache[cache_key]
 
@@ -415,18 +542,28 @@ class Graphics:
             self._unit_portrait_cache[cache_key] = None
             return None
 
-        scaled = pygame.transform.smoothscale(image, (85, 85))
+        scaled = pygame.transform.smoothscale(image, (size, size))
         self._unit_portrait_cache[cache_key] = scaled
         return scaled
 
     def _draw_ui_overlay(self) -> None:
         """Draw top UI bar and simulation time text above map layers."""
         screen_w, _ = self.screen.get_size()
+        bar_w = 170
         bar_x = 0
         if self.rbar_image is not None:
             bar_w = self.rbar_image.get_width()
             bar_x = max(0, screen_w - bar_w)
             self.screen.blit(self.rbar_image, (bar_x, 0))
+
+        panel_padding = 10
+        content_x = bar_x + panel_padding
+        content_w = max(80, bar_w - (panel_padding * 2))
+
+        def blit_fitted_text(text: str, y: int) -> None:
+            fitted = self._fit_text(text, content_w)
+            if fitted:
+                self.screen.blit(self.ui_font.render(fitted, True, text_color), (content_x, y))
 
         sim = getattr(self.game, "simulation", None)
         if sim is None:
@@ -446,9 +583,9 @@ class Graphics:
         speed_text = f"Speed: x{speed:.1f}"
 
         text_color = (245, 245, 245)
-        self.screen.blit(self.ui_font.render(status_text, True, text_color), (bar_x + 10, 4))
-        self.screen.blit(self.ui_font.render(time_text, True, text_color), (bar_x + 10, 18))
-        self.screen.blit(self.ui_font.render(speed_text, True, text_color), (bar_x + 10, 32))
+        blit_fitted_text(status_text, 4)
+        blit_fitted_text(time_text, 18)
+        blit_fitted_text(speed_text, 32)
 
         selected_id = getattr(self.game, "unit_selected", 0)
         if not selected_id:
@@ -458,22 +595,24 @@ class Graphics:
         if unit is None:
             return
 
-        panel_x = bar_x + 10
+        panel_x = content_x
         panel_y = 56
+        portrait_size = max(70, min(110, content_w))
 
-        portrait = self._get_unit_portrait(unit)
+        portrait = self._get_unit_portrait(unit, size=portrait_size)
         if portrait is not None:
             self.screen.blit(portrait, (panel_x, panel_y))
 
         # Name above portrait.
-        self.screen.blit(self.ui_font.render(f"{unit.name}", True, text_color), (panel_x, panel_y - 12))
+        blit_fitted_text(f"{unit.name}", panel_y - 12)
 
         # Rest of unit data under portrait.
-        data_y = panel_y + 88
-        self.screen.blit(self.ui_font.render(f"Unit: {unit.id}", True, text_color), (panel_x, data_y))
-        self.screen.blit(self.ui_font.render(f"Nation: {unit.nation}", True, text_color), (panel_x, data_y + 12))
-        self.screen.blit(self.ui_font.render(f"Prov: {unit.location}", True, text_color), (panel_x, data_y + 24))
-        self.screen.blit(self.ui_font.render(f"Status: {getattr(unit, 'status', 1)}", True, text_color), (panel_x, data_y + 36))
+        line_h = self.ui_font.get_linesize()
+        data_y = panel_y + portrait_size + 6
+        blit_fitted_text(f"Unit: {unit.id}", data_y)
+        blit_fitted_text(f"Nation: {unit.nation}", data_y + line_h)
+        blit_fitted_text(f"Prov: {unit.location}", data_y + (line_h * 2))
+        blit_fitted_text(f"Status: {getattr(unit, 'status', 1)}", data_y + (line_h * 3))
 
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)
