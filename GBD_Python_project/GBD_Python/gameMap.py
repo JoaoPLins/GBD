@@ -9,7 +9,7 @@ class Map():
         self.provinces = []
         self._province_index = {}
 
-    def load_provinces(self, geojson_file, nearby_csv_file=None):
+    def load_provinces(self, geojson_file, nearby_csv_file=None, centers_csv_file=None):
         with open(geojson_file, encoding="utf-8") as f:
             data = json.load(f)
 
@@ -33,7 +33,8 @@ class Map():
                 "is_water": props["is_water"],
                 "owner": props["owner"],
                 "controler": props["controler"],
-                "nearby_provinces": []
+                "nearby_provinces": [],
+                "center": None,
             }
 
             self.provinces.append(province)
@@ -42,6 +43,10 @@ class Map():
         # Load nearby provinces if CSV file is provided
         if nearby_csv_file:
             self._load_nearby_from_csv(nearby_csv_file)
+
+        # Load precomputed province centers if CSV file is provided
+        if centers_csv_file:
+            self._load_centers_from_csv(centers_csv_file)
     
     def _load_nearby_from_csv(self, csv_file):
         """Load nearby provinces data from a CSV file."""
@@ -59,6 +64,57 @@ class Map():
                 province = self.get_province_by_id(province_id)
                 if province:
                     province["nearby_provinces"] = nearby_ids
+
+    def _load_centers_from_csv(self, csv_file):
+        """Load province center coordinates from a CSV file."""
+        with open(csv_file, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                province_id = int(row["province_id"])
+                center_x = float(row["center_x"])
+                center_y = float(row["center_y"])
+
+                province = self.get_province_by_id(province_id)
+                if province:
+                    province["center"] = (center_x, center_y)
+
+    def _calculate_centroid(self, polygon):
+        """Calculate centroid by averaging polygon vertices."""
+        if not polygon:
+            return 0.0, 0.0
+
+        x_coords = [p[0] for p in polygon]
+        y_coords = [p[1] for p in polygon]
+        return sum(x_coords) / len(x_coords), sum(y_coords) / len(y_coords)
+
+    def _calculate_province_center(self, province):
+        """Fallback center calculation if CSV data is missing."""
+        polygons = province.get("polygons", [])
+        if not polygons:
+            return 0.0, 0.0
+
+        centroids = [self._calculate_centroid(poly) for poly in polygons]
+        avg_x = sum(c[0] for c in centroids) / len(centroids)
+        avg_y = sum(c[1] for c in centroids) / len(centroids)
+        return avg_x, avg_y
+
+    def get_province_center(self, province_or_id):
+        """Return province center (loaded from CSV when available)."""
+        if isinstance(province_or_id, dict):
+            province = province_or_id
+        else:
+            province = self.get_province_by_id(province_or_id)
+
+        if not province:
+            return 0.0, 0.0
+
+        center = province.get("center")
+        if center is not None:
+            return center
+
+        center = self._calculate_province_center(province)
+        province["center"] = center
+        return center
     
     def get_all_provinces(self):
         """Return a list of all loaded provinces."""

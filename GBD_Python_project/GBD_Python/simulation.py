@@ -241,6 +241,25 @@ class Simulation(threading.Thread):
 
 	def combat(self, province_id):
 		pass
+
+	def _is_water_province(self, province) -> bool:
+		"""Return True when the province is considered water for pathing."""
+		if not province:
+			return False
+
+		is_water = province.get("is_water")
+		if isinstance(is_water, bool):
+			return is_water
+		if isinstance(is_water, (int, float)):
+			return bool(is_water)
+		if isinstance(is_water, str):
+			return is_water.strip().lower() in {"1", "true", "t", "yes", "y", "water"}
+
+		terrain = province.get("terrain")
+		if isinstance(terrain, str):
+			return terrain.strip().lower() == "water"
+
+		return False
 	
 	def pathing(self, unit_id, destination_province_id):
 		"""Queue shortest path movement using A* over already-loaded nearby provinces."""
@@ -252,6 +271,10 @@ class Simulation(threading.Thread):
 			start_province_id = unit.location
 			if start_province_id == destination_province_id:
 				return [start_province_id]
+
+			destination_province = self.game_map.get_province_by_id(destination_province_id)
+			if destination_province is None or self._is_water_province(destination_province):
+				return []
 
 			open_heap = []
 			heapq.heappush(open_heap, (0, start_province_id))
@@ -270,6 +293,10 @@ class Simulation(threading.Thread):
 					continue
 
 				for neighbor in province.get("nearby_provinces", []):
+					neighbor_province = self.game_map.get_province_by_id(neighbor)
+					if neighbor_province is None or self._is_water_province(neighbor_province):
+						continue
+
 					tentative_cost = g_cost[current] + 1
 					if tentative_cost < g_cost.get(neighbor, float("inf")):
 						came_from[neighbor] = current

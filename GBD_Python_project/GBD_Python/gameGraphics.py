@@ -290,14 +290,21 @@ class Graphics:
 
     def _get_province_center(self, province: dict) -> Tuple[float, float]:
         """Get the center point of a province by averaging all polygon centroids."""
-        if not province["polygons"]:
-            return 0.0, 0.0
-        
-        centroids = [self._calculate_centroid(poly) for poly in province["polygons"]]
-        avg_x = sum(c[0] for c in centroids) / len(centroids)
-        avg_y = sum(c[1] for c in centroids) / len(centroids)
-        
-        return avg_x, avg_y
+        center = self.game.map.get_province_center(province)
+        if center is not None:
+            return center
+
+        # Legacy in-graphics center calculation kept for reference.
+        # if not province["polygons"]:
+        #     return 0.0, 0.0
+        #
+        # centroids = [self._calculate_centroid(poly) for poly in province["polygons"]]
+        # avg_x = sum(c[0] for c in centroids) / len(centroids)
+        # avg_y = sum(c[1] for c in centroids) / len(centroids)
+        #
+        # return avg_x, avg_y
+
+        return 0.0, 0.0
 
     def draw_nearby_connections(self, color: Tuple[int, int, int] = (255, 0, 0), width: int = 2) -> None:
         """Draw lines connecting nearby provinces."""

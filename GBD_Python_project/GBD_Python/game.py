@@ -22,7 +22,8 @@ class Game:
         self.running = True
         geojson_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "provinces.geojson"
         nearby_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nearby_provinces.csv"
-        self.map.load_provinces(str(geojson_path), str(nearby_csv_path))
+        centers_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "province_centers.csv"
+        self.map.load_provinces(str(geojson_path), str(nearby_csv_path), str(centers_csv_path))
         self.nation_manager = NationManager()
         nations_json_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nations.json"
         self.nation_manager.load_from_json(str(nations_json_path))

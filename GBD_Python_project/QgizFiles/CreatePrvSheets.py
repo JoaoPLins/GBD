@@ -3,6 +3,35 @@ import csv
 import math
 from pathlib import Path
 
+
+def calculate_polygon_centroid(polygon):
+    """Calculate centroid by averaging polygon vertices."""
+    if not polygon:
+        return 0.0, 0.0
+
+    x_coords = [point[0] for point in polygon]
+    y_coords = [point[1] for point in polygon]
+    return sum(x_coords) / len(x_coords), sum(y_coords) / len(y_coords)
+
+
+def calculate_province_center(geometry):
+    """Calculate province center by averaging centroid of each polygon part."""
+    polygons = []
+
+    if geometry["type"] == "Polygon":
+        polygons.append(geometry["coordinates"][0])
+    elif geometry["type"] == "MultiPolygon":
+        for poly in geometry["coordinates"]:
+            polygons.append(poly[0])
+
+    if not polygons:
+        return 0.0, 0.0
+
+    centroids = [calculate_polygon_centroid(poly) for poly in polygons]
+    center_x = sum(c[0] for c in centroids) / len(centroids)
+    center_y = sum(c[1] for c in centroids) / len(centroids)
+    return center_x, center_y
+
 def point_to_line_distance(point, line_start, line_end):
     """Calculate distance from point to line segment."""
     px, py = point
@@ -148,6 +177,29 @@ def find_nearby_provinces(geojson_file, output_csv, border_threshold=10):
     print(f"Border proximity threshold: {border_threshold} units")
     print(f"Total provinces: {len(provinces)}")
 
+
+def create_province_centers_csv(geojson_file, output_csv):
+    """Create a CSV with province id and precomputed map center coordinates."""
+    with open(geojson_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    rows = []
+    for feature in data["features"]:
+        prov_id = int(feature["properties"]["id"])
+        center_x, center_y = calculate_province_center(feature["geometry"])
+        rows.append((prov_id, center_x, center_y))
+
+    rows.sort(key=lambda item: item[0])
+
+    with open(output_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["province_id", "center_x", "center_y"])
+        for prov_id, center_x, center_y in rows:
+            writer.writerow([prov_id, f"{center_x:.6f}", f"{center_y:.6f}"])
+
+    print(f"Province centers CSV written to: {output_csv}")
+    print(f"Total province centers: {len(rows)}")
+
 def create_prv_sheets(json_file, output_file):
     pass
 
@@ -158,8 +210,10 @@ if __name__ == '__main__':
     # Input and output file paths
     geojson_path = script_dir / 'provinces.geojson'
     output_path = script_dir / 'nearby_provinces.csv'
+    centers_output_path = script_dir / 'province_centers.csv'
     
     # Border proximity threshold in coordinate units
     # Lower values = only directly touching provinces
     # Higher values = provinces that are close but not touching
     find_nearby_provinces(str(geojson_path), str(output_path), border_threshold=5)
+    create_province_centers_csv(str(geojson_path), str(centers_output_path))
