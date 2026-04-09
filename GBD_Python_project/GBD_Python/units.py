@@ -2,6 +2,7 @@ from ast import Pass
 import json
 from pathlib import Path
 
+#totalUnits = 0
 
 class Unit:
     """Represents a single military unit."""
@@ -38,13 +39,23 @@ class Unit:
         self.logistics = logistics
         self.suply = suply
         self.status = status
+        self.unit_spotting = [0,0]
+        self.unit_dectectability = 0
         self.counter = 0
+        self.fatigue = 0
+        self.morale = 100
+        self.experience = 0
+        self.units_spoted = []
+        self.visibility = 0
+        self.unitCurrentSpoting = 0
+        #totalUnits += 1
 
     def return_status(self):
+        #refractor this in the future. maybe using @proprety for it and dictionaries. to study
         """
         Return what the unit is doing 
         0 - reserve
-        1 - Active
+        1 - Depoloyed
         2 - Quartered
         3 - moving
         4 - resting
@@ -52,11 +63,12 @@ class Unit:
         6 - improving defenses
         7 - securing province
         8 - disorganized
+        9 - Guerrila/Recon
         """
         if self.status == 0:
             return "Reserve"
         elif self.status == 1:
-            return "Active"
+            return "Deployed"
         elif self.status == 2:
             return "Quartered"
         elif self.status == 3:
@@ -71,6 +83,10 @@ class Unit:
             return "Securing Province"
         elif self.status == 8:
             return "Disorganized"
+        elif self.status == 9:
+            return "Guerrilla/Recon"
+        elif self.status == 10:
+            return "Attacking"
         else:
             return "Unknown Status"
         
@@ -82,6 +98,7 @@ class Unit:
             new_status: New status code to set for the unit
         """
         self.status = new_status
+        self.calculate_visibility()
 
     def update_counter(self, new_counter):
         """
@@ -92,6 +109,66 @@ class Unit:
         """
         self.counter = new_counter
 
+    def update_spotting(self):
+        #refractor this in the future. maybe using @proprety for it and dictionaries. to study
+        #                        [provinces near , the current province]
+        if self.status == 0:
+            self.unit_spotting = [0,1]
+        elif self.status == 1:
+            self.unit_spotting = [10,50]
+        elif self.status == 2:
+            self.unit_spotting = [5,25]
+        elif self.status == 3:
+            self.unit_spotting = [7,35]
+        elif self.status == 4:
+            self.unit_spotting = [0,35]
+        elif self.status == 5:
+            self.unit_spotting = [25,70]
+        elif self.status == 6:
+            self.unit_spotting = [20,60]
+        elif self.status == 7:
+            self.unit_spotting = [30,95]
+        elif self.status == 8:
+            self.unit_spotting = [0,0]
+        elif self.status == 9:
+            self.unit_spotting = [15,95]
+        elif self.status == 10:
+            self.unit_spotting = [50,50]
+
+    def update_dectectability(self):
+        #refractor this in the future. maybe using @proprety for it and dictionaries. to study
+        if self.status == 0:
+            self.unit_dectectability = 0
+        elif self.status == 1:
+            self.unit_dectectability = 100
+        elif self.status == 2:
+            self.unit_dectectability = 100
+        elif self.status == 3:
+            self.unit_dectectability = 50
+        elif self.status == 4:
+            self.unit_dectectability = 50
+        elif self.status == 5:
+            self.unit_dectectability = 75
+        elif self.status == 6:
+            self.unit_dectectability = 75
+        elif self.status == 7:
+            self.unit_dectectability = 100
+        elif self.status == 8:
+            self.unit_dectectability = 30
+        elif self.status == 9:
+            self.unit_dectectability = 10
+        elif self.status == 10:
+            self.unit_dectectability = 200
+
+    def calculate_visibility(self):
+        #calculates the visibility on the unit instead of doing everytime in the simulation. future update will add this value with other simulated situations like terrain weather.
+        self.visibility = self.unit_dectectability + (self.soldiers // 100)
+    
+    def return_spotting(self, where):
+        #calculates the spotting hability of a unit on other units
+        self.unitCurrentSpoting = self.unit_spotting[where] + (self.soldiers // 100)
+        
+        
         
 class MergedUnit:
     

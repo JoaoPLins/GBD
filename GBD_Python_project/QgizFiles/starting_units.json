@@ -27,7 +27,35 @@
             "logistics": 1,
             "suply": 10,
             "status": 1            
-        }
+        },
+        "unit3": {
+            "name": "Infantry",
+            "nation": "URU",
+            "location": 9,
+            "home": 9,
+            "army": 1,
+            "soldiers": 100,
+            "attack": 10,
+            "defense": 5,
+            "speed": 1,
+            "logistics": 1,
+            "suply": 10,
+            "status": 1            
+        },
+        "unit4": {
+            "name": "Infantry",
+            "nation": "RGS",
+            "location": 29,
+            "home": 29,
+            "army": 2,
+            "soldiers": 1000,
+            "attack": 100,
+            "defense": 50,
+            "speed": 1,
+            "logistics": 1,
+            "suply": 10,
+            "status": 0            
+        }    
 
     }
 }

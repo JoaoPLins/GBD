@@ -48,6 +48,7 @@ class Game:
         # Center on Montevideo at startup
         self.graphics.center_on_province_id(1)
         self.unit_selected = 0
+        self.province_selected = 0
 
     def key_handler(self) -> None:
         keys = pygame.key.get_pressed()
@@ -77,15 +78,18 @@ class Game:
                     if unit:
                         print(f"Clicked on unit {unit.id} (Army {unit.army}, Nation: {unit.nation})")
                         self.unit_selected = unit.id
+                        self.province_selected = unit.location
                     else:
                         # Then check for province clicks
                         province = self.map.get_province_at_point(wx, wy)
                         if province:
+                            self.province_selected = province["id"]
                             self.unit_selected = 0  # Deselect unit if clicked on a province
                             print(f"Clicked on province {province['id']}")
                         else:
                             print("Clicked outside any province or unit")
                             self.unit_selected = 0  # Deselect unit if clicked on empty space
+                            self.province_selected = 0
                 elif event.button == 3:  # Right click
                     if self.unit_selected != 0:
                         mx, my = event.pos

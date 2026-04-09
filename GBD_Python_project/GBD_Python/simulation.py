@@ -1,6 +1,7 @@
 import threading
 import time
 import heapq
+import random
 
 
 class Simulation(threading.Thread):
@@ -79,6 +80,8 @@ class Simulation(threading.Thread):
 
 		self._process_mobilization()
 		self._process_movements()
+		self.Unit_spotting()
+		#self.combat()
 
 	def _process_mobilization(self) -> None:
 		"""Tick down mobilization delays and promote units to Moving status when ready."""
@@ -224,6 +227,8 @@ class Simulation(threading.Thread):
 			if len(movement) <= 1:
 				del self.moviment_list[movement_idx]
 				del self.moviment_time[timer_idx]
+				unit.status = 1
+				unit.counter = 0
 				return False
 
 			next_province_id = movement[1]
@@ -233,13 +238,78 @@ class Simulation(threading.Thread):
 			if len(movement) == 1:
 				del self.moviment_list[movement_idx]
 				del self.moviment_time[timer_idx]
+				unit.status = 1
+				unit.counter = 0
 			else:
 				self.moviment_time[timer_idx][1] = self._movement_ticks_for_unit(unit)
 
 			return True
 	
+	def get_unit_by_location(self, province_id):
+		"""Return list of units currently located in the specified province."""
+		units_in_province = []
+		for army in self.armies.values():
+			for unit in army.units.values():
+				if unit.location == province_id:
+					units_in_province.append(unit)
+		return units_in_province
+
+	def _get_root_nation_tag(self, nation_tag):
+		"""Return the top-level nation tag for a nation/substate chain."""
+		if not nation_tag or self.nation_manager is None:
+			return nation_tag
+
+		current_tag = nation_tag
+		visited = set()
+		while current_tag and current_tag not in visited:
+			visited.add(current_tag)
+			nation = self.nation_manager.get_nation(current_tag)
+			if nation is None or not nation.parent:
+				return current_tag
+			current_tag = nation.parent
+
+		return nation_tag
+
+	def _same_side(self, unit_a, unit_b):
+		return self._get_root_nation_tag(unit_a.nation) == self._get_root_nation_tag(unit_b.nation)
+
+	def _spot_units_in_province(self, spotter, province_id, spotting_index):
+		#spotting_index: 0 for nearby provinces, 1 for same province (higher chance)
+		units_in_province = self.get_unit_by_location(province_id)
+		for unit in units_in_province:
+			if unit.id == spotter.id or self._same_side(unit, spotter) or unit.id in spotter.units_spoted:
+				continue
+			print(f"{spotter.name} is attempting to spot {unit.name} in province {province_id}...")	
+			spotting_power = spotter.unit_spotting[spotting_index] + (spotter.soldiers // 100)
+			spot_chance = (spotting_power // max(1, unit.visibility)) + 1
+			if random.randint(0, 100) < spot_chance:
+				spotter.units_spoted.append(unit.id)
+				spotter.unitCurrentSpoting += 1
+				print(f"{spotter.name} spotted {unit.name} in province {province_id}! (chance {spot_chance}%)")
+				
+
+	def spotting(self, spotter, province_id):
+		# First check for units in the same province.
+		self._spot_units_in_province(spotter, province_id, 1)
+
+		# Now check for units in nearby provinces.
+		province = self.game_map.get_province_by_id(province_id)
+		if not province:
+			return
+
+		for nearby_province_id in province.get("nearby_provinces", []):
+			self._spot_units_in_province(spotter, nearby_province_id, 0)
+
+	def Unit_spotting(self):
+		for army in self.armies.values():
+			for unit in army.units.values():
+				unit.update_spotting()
+				self.spotting(unit, unit.location)
 
 	def combat(self, province_id):
+		pass
+	
+	def activeCombat(self, unit_ida, unit_idb, province_id):
 		pass
 
 	def _is_water_province(self, province) -> bool:

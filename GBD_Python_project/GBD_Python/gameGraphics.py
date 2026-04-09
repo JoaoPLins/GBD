@@ -586,7 +586,7 @@ class Graphics:
         status = "PAUSED" if paused else "RUNNING"
 
         status_text = f"Status: {status}"
-        time_text = f"Time: {year:04d}-{month:02d}-{day:02d} {hour:02d}:00"
+        time_text = f"Time: {year:04d}/{month:02d}/{day:02d}-{hour:02d}:00"
         speed_text = f"Speed: x{speed:.1f}"
 
         text_color = (245, 245, 245)
@@ -595,31 +595,52 @@ class Graphics:
         blit_fitted_text(speed_text, 32)
 
         selected_id = getattr(self.game, "unit_selected", 0)
-        if not selected_id:
-            return
-
-        unit = self._find_unit_by_id(selected_id)
-        if unit is None:
-            return
-
+        selected_province_id = getattr(self.game, "province_selected", 0)
         panel_x = content_x
         panel_y = 56
-        portrait_size = max(70, min(110, content_w))
-
-        portrait = self._get_unit_portrait(unit, size=portrait_size)
-        if portrait is not None:
-            self.screen.blit(portrait, (panel_x, panel_y))
-
-        # Name above portrait.
-        blit_fitted_text(f"{unit.name}", panel_y - 12)
-
-        # Rest of unit data under portrait.
+        preview_size = max(70, min(110, content_w))
         line_h = self.ui_font.get_linesize()
-        data_y = panel_y + portrait_size + 6
-        blit_fitted_text(f"Unit: {unit.id}", data_y)
-        blit_fitted_text(f"Nation: {unit.nation}", data_y + line_h)
-        blit_fitted_text(f"Prov: {unit.location}", data_y + (line_h * 2))
-        blit_fitted_text(f"Status: {getattr(unit, 'status', 1)}", data_y + (line_h * 3))
+
+        unit = self._find_unit_by_id(selected_id) if selected_id else None
+        if unit is not None:
+            portrait = self._get_unit_portrait(unit, size=preview_size)
+            if portrait is not None:
+                self.screen.blit(portrait, (panel_x, panel_y))
+
+            blit_fitted_text(f"{unit.name}", panel_y - 12)
+
+            data_y = panel_y + preview_size + 6
+            blit_fitted_text(f"Unit: {unit.id}", data_y)
+            blit_fitted_text(f"Nation: {unit.nation}", data_y + line_h)
+            blit_fitted_text(f"Prov: {unit.location}", data_y + (line_h * 2))
+            blit_fitted_text(f"Status: {getattr(unit, 'status', 1)}", data_y + (line_h * 3))
+            return
+
+        if not selected_province_id:
+            return
+
+        province = self.game.map.get_province_by_id(selected_province_id)
+        if province is None:
+            return
+
+        preview_rect = pygame.Rect(panel_x, panel_y, preview_size, preview_size)
+        pygame.draw.rect(self.screen, (28, 32, 36), preview_rect)
+        pygame.draw.rect(self.screen, (90, 90, 90), preview_rect, 1)
+        placeholder = self.ui_font.render("No image", True, (190, 190, 190))
+        placeholder_rect = placeholder.get_rect(center=preview_rect.center)
+        self.screen.blit(placeholder, placeholder_rect)
+
+        province_name = str(province.get("name") or f"Province {province.get('id', '?')}")
+        blit_fitted_text(province_name, panel_y - 12)
+
+        data_y = panel_y + preview_size + 6
+        owner = province.get("owner", "-")
+        controler = province.get("controler", "-")
+        terrain = province.get("terrain", "-")
+        blit_fitted_text(f"Owner: {owner}", data_y)
+        blit_fitted_text(f"Ctrl: {controler}", data_y + line_h)
+        blit_fitted_text(f"Terrain: {terrain}", data_y + (line_h * 2))
+        blit_fitted_text(f"Nearby: {len(province.get('nearby_provinces', []))}", data_y + (line_h * 3))
 
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)

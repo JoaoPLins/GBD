@@ -28,6 +28,7 @@ class Map():
 
             province = {
                 "id": props["id"],
+                "name": props.get("p_name") or props.get("name") or f"Province {props['id']}",
                 "polygons": polygons,
                 "terrain": props["terrain"],
                 "is_water": props["is_water"],
