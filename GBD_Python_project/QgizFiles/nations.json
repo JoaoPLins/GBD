@@ -9,6 +9,7 @@
       "parties": ["RGS", "Cafe", "leite"],
       "substates": ["RGS"],
       "capital": "Rio de Janeiro",
+      "capital_id": "",
       "flag": "art/Bra.png"
     },
     {
@@ -20,6 +21,7 @@
       "parties": ["arg1", "arg2", "arg3"],
       "substates": ["COR", "ETR"],
       "capital": "Buenos Aires",
+      "capital_id": "94",
       "flag": "art/Arg.png"
     },
     {
@@ -31,6 +33,7 @@
       "parties": ["uru1", "uru2", "uru3"],
       "substates": [],
       "capital": "Montevideo",
+      "capital_id": "1",
       "flag": "art/Uru.png"
     },
     {
@@ -39,6 +42,8 @@
       "type": "province",
       "color": "(140, 200, 255)",
       "parent": "ARG",
+      "capital": "Corrientes",
+      "capital_id": "73",
       "flag": "art/COR.png"
 
     },
@@ -48,6 +53,8 @@
       "type": "province",
       "color": "(140, 200, 255)",
       "parent": "ARG" ,
+      "capital": "Paraná",
+      "capital_id": "89",
       "flag": "art/ETR.png"
     },
     {
@@ -56,6 +63,8 @@
       "type": "state",
       "color": "(245, 210, 70)",
       "parent": "BRA",
+      "capital": "Porto Alegre",
+      "capital_id": "52",
       "flag": "art/RGS.png"
     }
   ]

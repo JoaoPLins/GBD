@@ -59,6 +59,7 @@ class Simulation(threading.Thread):
 
 	def _advance_one_tick(self) -> None:
 		"""Advance simulation by one in-game hour."""
+		run_daily_province_tick = False
 		with self._state_lock:
 			self.tick_count += 1
 
@@ -67,6 +68,7 @@ class Simulation(threading.Thread):
 			if self.current_hour >= 24:
 				self.current_hour = 0
 				self.current_day += 1
+				run_daily_province_tick = True
 				if self.current_day > 30:
 					self.current_day = 1
 					self.current_month += 1
@@ -77,6 +79,9 @@ class Simulation(threading.Thread):
 			# - self.game_map
 			# - self.nation_manager
 			# - self.armies
+
+		if run_daily_province_tick:
+			self.game_map.run_daily_province_simulation()
 
 		self._process_mobilization()
 		self._process_movements()
@@ -281,7 +286,7 @@ class Simulation(threading.Thread):
 				continue
 			print(f"{spotter.name} is attempting to spot {unit.name} in province {province_id}...")	
 			spotting_power = spotter.unit_spotting[spotting_index] + (spotter.soldiers // 100)
-			spot_chance = (spotting_power // max(1, unit.visibility)) + 1
+			spot_chance = (spotting_power + unit.visibility)
 			if random.randint(0, 100) < spot_chance:
 				spotter.units_spoted.append(unit.id)
 				spotter.unitCurrentSpoting += 1

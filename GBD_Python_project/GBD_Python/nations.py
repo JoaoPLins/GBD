@@ -12,6 +12,7 @@ class Nation:
         name: str,
         nation_type: str,
         capital: Optional[str] = None,
+        capital_id: Optional[str] = None,
         government: Optional[str] = None,
         parties: Optional[List[str]] = None,
         substates: Optional[List[str]] = None,
@@ -38,6 +39,7 @@ class Nation:
         self.name = name
         self.type = nation_type
         self.capital = capital
+        self.capital_id = capital_id# Optional field for capital city ID
         self.government = government
         self.parties = parties or []
         self.substates = substates or []
@@ -73,6 +75,15 @@ class Nation:
         data.update(self.extra)
         return data
 
+    def return_capital_id_int(self):
+        """Return the capital_id as an integer, or None if not set."""
+        if self.capital_id is not None:
+            try:
+                return int(self.capital_id)
+            except ValueError:
+                print(f"Warning: capital_id '{self.capital_id}' for nation '{self.tag}' is not a valid integer.")
+                return None
+        return None
 
 class NationManager:
     """Manages loading and accessing nations from JSON data."""
@@ -110,6 +121,7 @@ class NationManager:
         name = data.get('name')
         nation_type = data.get('type')
         capital = data.get('capital')
+        capital_id = data.get('capital_id')  # Optional field for capital city ID
         government = data.get('government')
         parties = data.get('parties')
         substates = data.get('substates')
@@ -117,7 +129,7 @@ class NationManager:
         flag = data.get('flag')
         
         # Collect any extra fields
-        known_keys = {'tag', 'name', 'type', 'capital', 'government', 
+        known_keys = {'tag', 'name', 'type', 'capital', 'capital_id', 'government', 
                      'parties', 'substates', 'parent', 'flag'}
         extra = {k: v for k, v in data.items() if k not in known_keys}
         
@@ -126,6 +138,7 @@ class NationManager:
             name=name,
             nation_type=nation_type,
             capital=capital,
+            capital_id=capital_id,
             government=government,
             parties=parties,
             substates=substates,
@@ -153,6 +166,8 @@ class NationManager:
             return []
         return [self.get_nation(tag) for tag in nation.substates 
                 if self.get_nation(tag)]
+    
+
 
 
 # Example usage

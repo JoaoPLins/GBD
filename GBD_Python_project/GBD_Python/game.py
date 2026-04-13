@@ -16,20 +16,36 @@ class Game:
         # Window/screen setup
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption(title)
-
+        print("Game initialized with screen size:", width, "x", height)
         # Load game data
+        
         self.map = Map(0, 0)
+        print("Map object created.")
         self.running = True
         geojson_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "provinces.geojson"
         nearby_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nearby_provinces.csv"
         centers_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "province_centers.csv"
+        pop_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "pop.csv"
+        print("loading provinces")
         self.map.load_provinces(str(geojson_path), str(nearby_csv_path), str(centers_csv_path))
+        print("provinces loaded, loading population")
+        self.map.load_population(str(pop_csv_path))
+        print("population loaded, loading nations")
         self.nation_manager = NationManager()
         nations_json_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nations.json"
         self.nation_manager.load_from_json(str(nations_json_path))
+        print("setting capitals from nations")
+        self.map.set_capitals_from_nations(self.nation_manager)
+        print("initializing startup province data (pre-units)")
+        self.map.initialize_startup_provinces()
         
+
         # Load units and armies
+        print("loading starting units")
         self.armies = load_starting_units()
+        added_armybases = self.map.initialize_startup_unit_province_data(self.armies)
+        print(f"startup province init complete ({added_armybases} army bases added)")
+        
 
         # Simulation runs in its own thread (independent from render FPS)
         self.simulation = Simulation(

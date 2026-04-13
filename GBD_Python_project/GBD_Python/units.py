@@ -33,22 +33,33 @@ class Unit:
         self.home = home  # Home province ID
         self.army = army  # Unit group ID
         self.soldiers = soldiers
+        self.reserve = 0
+        self.targetsize = soldiers
         self.attack = attack
         self.defense = defense
         self.speed = speed
-        self.logistics = logistics
-        self.suply = suply
+        self.transport_V = 0
+        self.transport_H = logistics #amount of horses
+        self.logistics_value = 0 # ammount of suply + ammo + equipment + fuel.  
+        self.suply = suply # this is basically food; could consider basic necesseties... 
+        self.ammo = 0
+        self.guns = 0
+        self.fuel_horse = 0
+        self.fuel = 0
         self.status = status
         self.unit_spotting = [0,0]
         self.unit_dectectability = 0
         self.counter = 0
         self.fatigue = 0
         self.morale = 100
+        self.organization = 100
         self.experience = 0
         self.units_spoted = []
         self.visibility = 0
         self.unitCurrentSpoting = 0
         #totalUnits += 1
+
+        self.calculate_visibility()
 
     def return_status(self):
         #refractor this in the future. maybe using @proprety for it and dictionaries. to study
@@ -64,6 +75,10 @@ class Unit:
         7 - securing province
         8 - disorganized
         9 - Guerrila/Recon
+        10 - Attacking
+        11 - mobilizing
+        12 - strategic redeployment
+        13 - forming up (creating a new unit)
         """
         if self.status == 0:
             return "Reserve"
@@ -87,6 +102,12 @@ class Unit:
             return "Guerrilla/Recon"
         elif self.status == 10:
             return "Attacking"
+        elif self.status == 11:
+            return "Mobilizing"
+        elif self.status == 12:
+            return "Strategic Redeployment"
+        elif self.status == 13:
+            return "Forming Up"
         else:
             return "Unknown Status"
         
@@ -134,6 +155,13 @@ class Unit:
             self.unit_spotting = [15,95]
         elif self.status == 10:
             self.unit_spotting = [50,50]
+        elif self.status == 11:
+            self.unit_spotting = [0,1]
+        elif self.status == 12:
+            self.unit_spotting = [0,1]
+        elif self.status == 13:
+            self.unit_spotting = [0,1]
+
 
     def update_dectectability(self):
         #refractor this in the future. maybe using @proprety for it and dictionaries. to study
@@ -159,6 +187,12 @@ class Unit:
             self.unit_dectectability = 10
         elif self.status == 10:
             self.unit_dectectability = 200
+        elif self.status == 11:
+            self.unit_dectectability = 50
+        elif self.status == 12:
+            self.unit_dectectability = 100
+        elif self.status == 13:
+            self.unit_dectectability = 100
 
     def calculate_visibility(self):
         #calculates the visibility on the unit instead of doing everytime in the simulation. future update will add this value with other simulated situations like terrain weather.
@@ -167,8 +201,58 @@ class Unit:
     def return_spotting(self, where):
         #calculates the spotting hability of a unit on other units
         self.unitCurrentSpoting = self.unit_spotting[where] + (self.soldiers // 100)
+
+    def demobilize(self):
+        #demobilizes the unit, setting soldiers to 0 and status to reserve
+        self.reserve = self.soldiers 
+        if self.targetsize - self.soldiers > self.soldiers * 10:
+            self.soldiers = 0
+        else:
+            self.soldiers = self.soldiers * 0.1
+            self.reserve = self.reserve - self.soldiers
         
-        
+        self.update_status(0)
+    
+    def mobilize(self):
+        #mobilizes the unit, setting soldiers to targetsize and status to deployed
+        if self.reserve > 0:
+            #it will take in consideration later the value of the infrastructure of the province. 
+            soldiersdelta =  100 * 1  #+ infrastructure value of the province 
+            self.soldiers += soldiersdelta
+            self.reserve -= soldiersdelta
+        else:
+            self.status = 1
+
+    def possible_status(self):
+        #returns a list of possible status for the unit to be set by the player.
+        possiblestatus = []
+        possiblestatus.append(5) #defending is always an option
+        if self.location == self.home:
+            possiblestatus.append(0) #reserve
+            possiblestatus.append(2) #quartered
+            possiblestatus.append(4) #resting
+        if self.organization > 10:
+            possiblestatus.append(3) #moving
+            possiblestatus.append(4) #resting
+        if self.organization > 25:
+            possiblestatus.append(7) #securing province
+            possiblestatus.append(10) #attacking
+        if self.organization > 50:
+            possiblestatus.append(1) #deployed
+            possiblestatus.append(6) #improving defenses
+        if self.organization > 75:
+            possiblestatus.append(9) #guerrila/recon
+
+        return possiblestatus
+
+    def return_soldiers_target_delta(self):
+        #returns the target size of the unit, which is the number of soldiers it should have when fully mobilized.
+        delta = self.targetsize - (self.soldiers + self.reserve)
+        return delta
+
+    def add_soldiers(self, number):
+        #adds soldiers to the unit, up to the target size.
+        soldiers += number
         
 class MergedUnit:
     

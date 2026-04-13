@@ -637,10 +637,29 @@ class Graphics:
         owner = province.get("owner", "-")
         controler = province.get("controler", "-")
         terrain = province.get("terrain", "-")
+        province_obj = self.game.map.get_province_object_by_id(selected_province_id)
+
         blit_fitted_text(f"Owner: {owner}", data_y)
         blit_fitted_text(f"Ctrl: {controler}", data_y + line_h)
         blit_fitted_text(f"Terrain: {terrain}", data_y + (line_h * 2))
         blit_fitted_text(f"Nearby: {len(province.get('nearby_provinces', []))}", data_y + (line_h * 3))
+
+        if province_obj is None:
+            return
+
+        blit_fitted_text(f"Pop: {province_obj.population}", data_y + (line_h * 4))
+        blit_fitted_text(f"Recruit: {province_obj.province_recrutable}", data_y + (line_h * 5))
+        blit_fitted_text(f"Soldiers: {province_obj.province_soldiers}", data_y + (line_h * 6))
+        blit_fitted_text(f"Buildings: {len(province_obj.buildings)}", data_y + (line_h * 7))
+        blit_fitted_text(
+            f"U Here/Home: {len(province_obj.units_in_here)}/{len(province_obj.units_from_here)}",
+            data_y + (line_h * 8),
+        )
+        blit_fitted_text(
+            f"Sup/Food/Fuel: {province_obj.suply}/{province_obj.food}/{province_obj.fuel}",
+            data_y + (line_h * 9),
+        )
+        blit_fitted_text(f"Ammo: {province_obj.ammo}", data_y + (line_h * 10))
 
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)
