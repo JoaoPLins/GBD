@@ -43,6 +43,7 @@ class Unit:
         self.logistics_value = 0 # ammount of suply + ammo + equipment + fuel.  
         self.suply = suply # this is basically food; could consider basic necesseties... 
         self.ammo = 0
+        self.officers = 0
         self.guns = 0
         self.fuel_horse = 0
         self.fuel = 0
@@ -55,10 +56,14 @@ class Unit:
         self.organization = 100
         self.experience = 0
         self.units_spoted = []
+        self.spotting_quality = []
+        self.spoted_by = []
         self.visibility = 0
         self.unitCurrentSpoting = 0
         #totalUnits += 1
 
+        self.update_dectectability()
+        self.update_spotting()
         self.calculate_visibility()
 
     def return_status(self):
@@ -119,6 +124,8 @@ class Unit:
             new_status: New status code to set for the unit
         """
         self.status = new_status
+        self.update_dectectability()
+        self.update_spotting()
         self.calculate_visibility()
 
     def update_counter(self, new_counter):
@@ -136,7 +143,7 @@ class Unit:
         if self.status == 0:
             self.unit_spotting = [0,1]
         elif self.status == 1:
-            self.unit_spotting = [10,50]
+            self.unit_spotting = [50,50]
         elif self.status == 2:
             self.unit_spotting = [5,25]
         elif self.status == 3:
@@ -166,7 +173,7 @@ class Unit:
     def update_dectectability(self):
         #refractor this in the future. maybe using @proprety for it and dictionaries. to study
         if self.status == 0:
-            self.unit_dectectability = 0
+            self.unit_dectectability = 1
         elif self.status == 1:
             self.unit_dectectability = 100
         elif self.status == 2:
@@ -196,12 +203,13 @@ class Unit:
 
     def calculate_visibility(self):
         #calculates the visibility on the unit instead of doing everytime in the simulation. future update will add this value with other simulated situations like terrain weather.
-        self.visibility = self.unit_dectectability + (self.soldiers // 100)
+        self.visibility = (self.unit_dectectability * (self.soldiers))//1000
     
     def return_spotting(self, where):
         #calculates the spotting hability of a unit on other units
-        self.unitCurrentSpoting = self.unit_spotting[where] + (self.soldiers // 100)
-
+        self.unitCurrentSpoting = (self.unit_spotting[where] * (self.soldiers // 100))//200
+        return self.unitCurrentSpoting
+    
     def demobilize(self):
         #demobilizes the unit, setting soldiers to 0 and status to reserve
         self.reserve = self.soldiers 
@@ -213,13 +221,19 @@ class Unit:
         
         self.update_status(0)
     
-    def mobilize(self):
+    def mobilize(self,soldiers_delta):
         #mobilizes the unit, setting soldiers to targetsize and status to deployed
         if self.reserve > 0:
             #it will take in consideration later the value of the infrastructure of the province. 
-            soldiersdelta =  100 * 1  #+ infrastructure value of the province 
-            self.soldiers += soldiersdelta
-            self.reserve -= soldiersdelta
+            #soldiersdelta =  100 * 1  #+ infrastructure value of the province 
+            if soldiers_delta > self.reserve:
+                soldiers_delta = self.reserve
+                self.update_status(1)
+
+            self.soldiers += soldiers_delta
+            self.reserve -= soldiers_delta
+
+
         else:
             self.status = 1
 
@@ -253,6 +267,38 @@ class Unit:
     def add_soldiers(self, number):
         #adds soldiers to the unit, up to the target size.
         soldiers += number
+
+    def is_spotted(self):
+        #returns true if the unit is spotted by any other unit, false otherwise.
+        if len(self.spoted_by) > 0:
+            return True
+        else:
+            return False
+        
+    def return_spoted_by(self):
+        #returns a list of unit ids that have spotted this unit.
+        return self.spoted_by
+    
+    def return_spotQuality_from_unit_id(self,unit_id):
+        dx = self.units_spoted.index(unit_id)
+        return self.spotting_quality[dx]
+
+    def edit_spotQuality_from_unit_id(self,unit_id,new_value):
+        dx = self.units_spoted.index(unit_id)
+        if self.spotting_quality[dx] <101:
+            self.spotting_quality[dx] += new_value
+            print(f"Updated spotting quality for unit {unit_id} to {self.spotting_quality[dx]}")
+
+    def pop_the_unit_from_unit_spoted(self, unit_id):
+        #removes a unit id from the list of units that have spotted this unit.
+        try:
+            idx = self.units_spoted.index(unit_id)
+            del self.units_spoted[idx]
+            del self.spotting_quality[idx]
+            self.unitCurrentSpoting -= 1
+            return True
+        except ValueError:
+            return False
         
 class MergedUnit:
     

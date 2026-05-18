@@ -237,6 +237,35 @@ class Simulation(threading.Thread):
 				return False
 
 			next_province_id = movement[1]
+			if unit.is_spotted():
+				for spotter_id in list(unit.return_spoted_by()):
+					unit_looking = self._find_unit_by_id(spotter_id)
+					if unit_looking is None:
+						if spotter_id in unit.spoted_by:
+							unit.spoted_by.remove(spotter_id)
+						continue
+					if unit_looking.location == next_province_id:
+						#maybe fire battle, lets see for now 
+						print("hi, battle may occur to be implemented")
+					elif unit.location == unit_looking.location:
+						print("unit see the other unit running away")
+					else:
+						unit_looking.pop_the_unit_from_unit_spoted(unit.id)
+						if unit_looking.id in unit.spoted_by:
+							unit.spoted_by.remove(unit_looking.id)
+						print(f"{unit_looking.name} no longer spots {unit.name} after it moved to province {next_province_id}.")
+				for aspoted in unit.units_spoted:
+					theUnit = self._find_unit_by_id(aspoted)
+					if theUnit.location == next_province_id:
+						print("wow a battle might start! cool.")
+					elif theUnit.location == unit.location:
+						print(f"{unit.name} is still spotting {theUnit.name} after it moved to province {next_province_id} running away.")
+					else:
+						unit.pop_the_unit_from_unit_spoted(aspoted)
+						if unit.id in theUnit.spoted_by:
+							theUnit.spoted_by.remove(unit.id)
+						print(f"{unit.name} no longer spots {theUnit.name} after it moved to province {next_province_id}.")
+
 			unit.location = next_province_id
 			del movement[1]
 
@@ -283,13 +312,19 @@ class Simulation(threading.Thread):
 		units_in_province = self.get_unit_by_location(province_id)
 		for unit in units_in_province:
 			if unit.id == spotter.id or self._same_side(unit, spotter) or unit.id in spotter.units_spoted:
+				if unit.id in spotter.units_spoted:
+					roll = random.randint(0,100)
+					add = (spotter.return_spotting(spotting_index)+roll) // 10 
+					spotter.edit_spotQuality_from_unit_id(unit.id, add)
 				continue
 			print(f"{spotter.name} is attempting to spot {unit.name} in province {province_id}...")	
-			spotting_power = spotter.unit_spotting[spotting_index] + (spotter.soldiers // 100)
-			spot_chance = (spotting_power + unit.visibility)
+			spotting_power = spotter.return_spotting(spotting_index)
+			spot_chance = (spotting_power + unit.visibility)//2
 			if random.randint(0, 100) < spot_chance:
 				spotter.units_spoted.append(unit.id)
 				spotter.unitCurrentSpoting += 1
+				spotter.spotting_quality.append(1)
+				unit.spoted_by.append(spotter.id)
 				print(f"{spotter.name} spotted {unit.name} in province {province_id}! (chance {spot_chance}%)")
 				
 

@@ -34,7 +34,7 @@
             "location": 9,
             "home": 9,
             "army": 1,
-            "soldiers": 100,
+            "soldiers": 5000,
             "attack": 10,
             "defense": 5,
             "speed": 1,
@@ -54,7 +54,7 @@
             "speed": 1,
             "logistics": 1,
             "suply": 10,
-            "status": 0            
+            "status": 1            
         }    
 
     }
