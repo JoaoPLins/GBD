@@ -35,6 +35,7 @@ class Map():
                 "polygons": polygons,
                 "terrain": props["terrain"],
                 "is_water": props["is_water"],
+                "is_coastal": props["is_costal"],
                 "owner": props["owner"],
                 "controler": props["controler"],
                 "nearby_provinces": [],
@@ -50,6 +51,7 @@ class Map():
                 owner=province["owner"],
                 controller=province["controler"],
                 iswater=province["is_water"],
+                iscoastal=province["is_coastal"],
                 terrain=province["terrain"],
             )
             self.provinceObjects.append(prov_obj)

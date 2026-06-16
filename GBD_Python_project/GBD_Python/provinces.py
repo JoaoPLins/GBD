@@ -120,7 +120,7 @@ class building:
             pass
 
 class Province:
-    def __init__(self,province_id,name,owner,controller,iswater,terrain):
+    def __init__(self,province_id,name,owner,controller,iswater,iscoastal,terrain):
         
         #comes from mapdata 
         self.province_id = province_id
@@ -128,6 +128,7 @@ class Province:
         self.owner = owner
         self.controller = controller
         self.iswater = iswater
+        self.iscoastal = iscoastal
         self.terrain = terrain
         #-------------------------------#
 
@@ -291,7 +292,7 @@ class Province:
             self.add_building(2,3)
             self.add_building(3,7)
             #lmao this is wrong
-            if self.iswater == 1:
+            if self.iscoastal == 1:
                 self.add_building(4,1)
                 #self.add_building(5,2) # this is the shipyard, but it is not implemented yet.
         else:
@@ -299,7 +300,7 @@ class Province:
             if self.population > 35000:
                 self.add_building(0,11)  # City Center
                 self.add_building(1,3)  # Civil Industry
-                if self.iswater == 1:
+                if self.iscoastal == 1:
                     self.add_building(2,1)  # Port
                 if self.size > 3:
                     for size in range(self.size -3 ):
