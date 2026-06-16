@@ -10,18 +10,19 @@ from gameGraphics import Graphics
 
 
 class Game:
-    def __init__(self, width: int = 800, height: int = 600, title: str = "GBD"):
+    def __init__(self, width: int = 800, height: int = 600, nation: str = "URU") -> None:
         pygame.init()
 
         # Window/screen setup
         self.screen = pygame.display.set_mode((width, height))
-        pygame.display.set_caption(title)
+        pygame.display.set_caption("GBD")
         print("Game initialized with screen size:", width, "x", height)
         # Load game data
         
         self.map = Map(0, 0)
         print("Map object created.")
         self.running = True
+        self.nation = nation
         geojson_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "provinces.geojson"
         nearby_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "nearby_provinces.csv"
         centers_csv_path = Path(__file__).resolve().parent.parent / "QgizFiles" / "province_centers.csv"
@@ -88,6 +89,45 @@ class Game:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left click
                     mx, my = event.pos
+
+                    if self.unit_selected != 0:
+                        selected_unit = self.graphics.get_unit_by_id(self.unit_selected)
+                        can_edit_status = self.graphics.can_edit_unit_status(selected_unit)
+                        if can_edit_status:
+                            can_edit_target_size = (
+                                selected_unit is not None
+                                and getattr(selected_unit, "location", None) == getattr(selected_unit, "home", None)
+                            )
+                            if can_edit_target_size:
+                                if self.graphics.is_unit_target_size_panel_point(mx, my):
+                                    self.graphics.begin_unit_target_size_input(selected_unit)
+                                    continue
+                                else:
+                                    self.graphics.end_unit_target_size_input()
+                            else:
+                                self.graphics.end_unit_target_size_input()
+
+                            if self.graphics.is_unit_target_size_panel_point(mx, my):
+                                continue
+
+                            status_code = self.graphics.get_unit_status_option_at_point(mx, my)
+                            if status_code is not None:
+                                if selected_unit is not None and status_code in selected_unit.possible_status():
+                                    selected_unit.update_status(status_code)
+                                    self.graphics._unit_status_dropdown_open = False
+                                    print(f"Set unit {selected_unit.id} status to {selected_unit.return_status()}")
+                                continue
+
+                            if self.graphics._unit_status_combobox_rect and self.graphics._unit_status_combobox_rect.collidepoint(mx, my):
+                                self.graphics.toggle_unit_status_dropdown()
+                                continue
+
+                            if self.graphics.is_unit_status_panel_point(mx, my):
+                                continue
+                        else:
+                            self.graphics._unit_status_dropdown_open = False
+                            self.graphics.end_unit_target_size_input()
+
                     wx, wy = self.graphics.screen_to_world(mx, my)
                     # Check for unit clicks first (they're on top)
                     unit = self.graphics.get_unit_at_point(wx, wy)
@@ -95,17 +135,23 @@ class Game:
                         print(f"Clicked on unit {unit.id} (Army {unit.army}, Nation: {unit.nation})")
                         self.unit_selected = unit.id
                         self.province_selected = unit.location
+                        self.graphics._unit_status_dropdown_open = False
+                        self.graphics.end_unit_target_size_input()
                     else:
                         # Then check for province clicks
                         province = self.map.get_province_at_point(wx, wy)
                         if province:
                             self.province_selected = province["id"]
                             self.unit_selected = 0  # Deselect unit if clicked on a province
+                            self.graphics._unit_status_dropdown_open = False
+                            self.graphics.end_unit_target_size_input()
                             print(f"Clicked on province {province['id']}")
                         else:
                             print("Clicked outside any province or unit")
                             self.unit_selected = 0  # Deselect unit if clicked on empty space
                             self.province_selected = 0
+                            self.graphics._unit_status_dropdown_open = False
+                            self.graphics.end_unit_target_size_input()
                 elif event.button == 3:  # Right click
                     if self.unit_selected != 0:
                         mx, my = event.pos
@@ -123,6 +169,28 @@ class Game:
                         print("Select a unit first with left click.")
                     
             elif event.type == pygame.KEYDOWN:
+                selected_unit = self.graphics.get_unit_by_id(self.unit_selected) if self.unit_selected else None
+                if (
+                    selected_unit is not None
+                    and self.graphics.can_edit_unit_status(selected_unit)
+                    and self.graphics.is_unit_target_size_input_active()
+                ):
+                    if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        ok, message = self.graphics.commit_unit_target_size_input(selected_unit)
+                        print(message)
+                        if ok:
+                            self.graphics.end_unit_target_size_input()
+                        continue
+                    if event.key == pygame.K_BACKSPACE:
+                        self.graphics.backspace_unit_target_size_input()
+                        continue
+                    if event.key == pygame.K_ESCAPE:
+                        self.graphics.end_unit_target_size_input()
+                        continue
+                    if event.unicode and event.unicode.isdigit():
+                        self.graphics.append_unit_target_size_digit(event.unicode)
+                        continue
+
                 if event.key == pygame.K_1:
                     self.simulation.set_speed(0.5)
                     print("Simulation speed set to 0.5x")

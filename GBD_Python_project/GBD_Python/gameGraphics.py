@@ -21,20 +21,135 @@ class Graphics:
         self._base_map_screen_cache: Optional[pygame.Surface] = None
         self._base_map_cache_key: Optional[Tuple[float, float, float, int, int]] = None
         self.rbar_image: Optional[pygame.Surface] = None
-        self.ui_font: pygame.font.Font = pygame.font.Font(None, 14)
+        _screen_h = screen.get_height()
+        _ui_font_size = max(14, min(22, _screen_h // 50))
+        self.ui_font: pygame.font.Font = pygame.font.Font(None, _ui_font_size)
         self._unit_portrait_cache: Dict[str, Optional[pygame.Surface]] = {}
         self._unit_icon_cache: Dict[str, Optional[pygame.Surface]] = {}
+        self.fog_of_war = 1 #0 = off. 1 = on
+        self.player_nation_tag = self._get_player_nation_tag()
+        self._unit_status_dropdown_open: bool = False
+        self._unit_status_combobox_rect: Optional[pygame.Rect] = None
+        self._unit_status_dropdown_rects: list[tuple[pygame.Rect, int]] = []
+        self._unit_target_size_input_rect: Optional[pygame.Rect] = None
+        self._unit_target_size_input_active: bool = False
+        self._unit_target_size_input_text: str = ""
+        self._unit_screen_rects: Dict[int, pygame.Rect] = {}
         
         # Load base map if available
         self._load_base_map()
         self._load_ui_assets()
 
+    def _get_player_nation_tag(self) -> Optional[str]:
+        """Return the player nation tag configured on the game, if any."""
+        nation_tag = str(getattr(self.game, "nation", "")).strip()
+        return nation_tag or None
+
+    def _get_root_nation_tag(self, nation_tag: Optional[str]) -> Optional[str]:
+        """Return the top-level nation tag for a nation or substate."""
+        if not nation_tag:
+            return nation_tag
+
+        manager = getattr(self.game, "nation_manager", None)
+        if manager is None:
+            return nation_tag
+
+        current_tag = nation_tag
+        visited = set()
+        while current_tag and current_tag not in visited:
+            visited.add(current_tag)
+            nation = manager.get_nation(current_tag)
+            if nation is None or not nation.parent:
+                return current_tag
+            current_tag = nation.parent
+
+        return nation_tag
+
+    def _is_player_side_nation(self, nation_tag: Optional[str]) -> bool:
+        """Return True when a nation belongs to the player side or one of its substates."""
+        player_root = self._get_root_nation_tag(self._get_player_nation_tag())
+        if player_root is None:
+            return False
+
+        return self._get_root_nation_tag(nation_tag) == player_root
+
+    def _province_is_player_controlled(self, province: dict) -> bool:
+        """Return True when the province is owned or controlled by the player side."""
+        for tag_key in ("controler", "owner"):
+            if self._is_player_side_nation(province.get(tag_key)):
+                return True
+        return False
+
+    def _province_has_player_side_unit(self, province: dict) -> bool:
+        """Return True when a player-side unit is stationed in the province."""
+        province_id = province.get("id")
+        if province_id is None:
+            return False
+
+        armies = getattr(self.game, "armies", {})
+        for army in armies.values():
+            for unit in army.get_all_units():
+                if getattr(unit, "location", None) == province_id and self._is_player_side_nation(getattr(unit, "nation", None)):
+                    return True
+
+        return False
+
+    def _province_is_visible_under_fog(self, province: dict) -> bool:
+        """Return True when a province should stay lit under fog of war."""
+        if not self.fog_of_war:
+            return True
+
+        if self._province_is_player_controlled(province):
+            return True
+
+        if self._province_has_player_side_unit(province):
+            return True
+
+        for nearby_id in province.get("nearby_provinces", []):
+            nearby_province = self.game.map.get_province_by_id(nearby_id)
+            if nearby_province and (
+                self._province_is_player_controlled(nearby_province)
+                or self._province_has_player_side_unit(nearby_province)
+            ):
+                return True
+
+        return False
+
+    def _is_unit_visible_to_player(self, unit) -> bool:
+        """Return True when a unit should be visible to the player under fog of war."""
+        if not self.fog_of_war:
+            return True
+
+        if self._is_player_side_nation(getattr(unit, "nation", None)):
+            return True
+
+        for spotter_id in getattr(unit, "spoted_by", []):
+            spotter = self._find_unit_by_id(spotter_id)
+            if spotter is not None and self._is_player_side_nation(getattr(spotter, "nation", None)):
+                return True
+
+        return False
+
+    @staticmethod
+    def _shade_color(color: Tuple[int, int, int], factor: float) -> Tuple[int, int, int]:
+        """Darken a color by multiplying each channel by factor."""
+        return tuple(max(0, min(255, int(channel * factor))) for channel in color)
+
     def _load_ui_assets(self) -> None:
         """Load UI overlays such as Art/UI/RBar.png."""
-        candidates = [
-            self.art_path / "UI" / "RBar.png",
-            self.art_path / "ui" / "RBar.png",
-        ]
+        screen_h = self.screen.get_height()
+        if screen_h >= 1080:
+            candidates = [
+                self.art_path / "UI" / "RBar1080.png",
+                self.art_path / "ui" / "RBar1080.png",
+                self.art_path / "UI" / "RBar.png",
+                self.art_path / "ui" / "RBar.png",
+            ]
+        else:
+            candidates = [
+                self.art_path / "UI" / "RBar.png",
+                self.art_path / "ui" / "RBar.png",
+            ]
 
         for ui_path in candidates:
             if ui_path.exists():
@@ -363,7 +478,7 @@ class Graphics:
             return 20
 
         zoom_factor = min(1.0, self.camera_scale / 4.0)
-        return int(20 + (45 * zoom_factor))
+        return int(20 + (65 * zoom_factor))
 
     def _get_unit_type_key(self, unit) -> str:
         raw_name = str(getattr(unit, "name", "")).strip().lower()
@@ -436,77 +551,331 @@ class Graphics:
             return str(status_fn())
 
         return str(getattr(unit, "status", ""))
+
+    @staticmethod
+    def _get_status_label(status_code: int) -> str:
+        labels = {
+            0: "Reserve",
+            1: "Deployed",
+            2: "Quartered",
+            3: "Moving",
+            4: "Resting",
+            5: "Defending",
+            6: "Improving Defenses",
+            7: "Securing Province",
+            8: "Disorganized",
+            9: "Guerrilla/Recon",
+            10: "Attacking",
+            11: "Mobilizing",
+            12: "Strategic Redeployment",
+            13: "Forming Up",
+        }
+        return labels.get(status_code, f"Status {status_code}")
+
+    def _get_unit_status_options(self, unit) -> list[tuple[int, str, bool]]:
+        """Return available unit status options as (code, label, is_current)."""
+        possible_status_fn = getattr(unit, "possible_status", None)
+        if not callable(possible_status_fn):
+            return []
+
+        current_status = getattr(unit, "status", None)
+        seen_statuses = set()
+        options: list[tuple[int, str, bool]] = []
+        for status_code in possible_status_fn():
+            if status_code in seen_statuses:
+                continue
+            seen_statuses.add(status_code)
+            options.append((status_code, self._get_status_label(status_code), status_code == current_status))
+
+        return options
+
+    def begin_unit_target_size_input(self, unit) -> None:
+        """Focus target-size input and prefill with current value."""
+        current_target = int(getattr(unit, "targetsize", getattr(unit, "soldiers", 0)))
+        self._unit_target_size_input_text = str(current_target)
+        self._unit_target_size_input_active = True
+
+    def end_unit_target_size_input(self) -> None:
+        """Unfocus target-size input."""
+        self._unit_target_size_input_active = False
+
+    def append_unit_target_size_digit(self, digit: str) -> None:
+        """Append one numeric digit to target-size input."""
+        if digit.isdigit() and len(self._unit_target_size_input_text) < 9:
+            self._unit_target_size_input_text += digit
+
+    def backspace_unit_target_size_input(self) -> None:
+        """Remove one character from target-size input."""
+        self._unit_target_size_input_text = self._unit_target_size_input_text[:-1]
+
+    def commit_unit_target_size_input(self, unit) -> tuple[bool, str]:
+        """Apply typed target-size value with reserve-only downsizing rule."""
+        raw = self._unit_target_size_input_text.strip()
+        if not raw:
+            return False, "Type a target size first."
+
+        try:
+            new_target = int(raw)
+        except ValueError:
+            return False, "Target size must be a number."
+
+        if new_target <= 0:
+            return False, "Target size must be greater than 0."
+
+        current_target = int(getattr(unit, "targetsize", getattr(unit, "soldiers", 0)))
+        if new_target < current_target and getattr(unit, "status", None) != 0:
+            return False, "Can't reduce target size unless unit is in Reserve."
+
+        set_target_fn = getattr(unit, "set_target_size", None)
+        if callable(set_target_fn):
+            set_target_fn(new_target)
+        elif getattr(unit, "home", None) == getattr(unit, "location", None):
+            unit.targetsize = new_target
+
+        if int(getattr(unit, "targetsize", current_target)) != new_target:
+            return False, "unit can't change it's size because its not at home,"
+
+        self._unit_target_size_input_text = str(new_target)
+        self._unit_target_size_input_active = False
+        return True, f"Set unit {unit.id} target size to {new_target}"
+
+    def get_unit_by_id(self, unit_id):
+        """Return a unit by id from any army."""
+        return self._find_unit_by_id(unit_id)
+
+    def can_edit_unit_status(self, unit) -> bool:
+        """Return True when status controls should be shown for the unit."""
+        return unit is not None and self._is_player_side_nation(getattr(unit, "nation", None))
+
+    def get_unit_status_option_at_point(self, sx: int, sy: int) -> Optional[int]:
+        """Return the status code for a clicked dropdown item, if any."""
+        for rect, status_code in self._unit_status_dropdown_rects:
+            if rect.collidepoint(sx, sy):
+                return status_code
+        return None
+
+    def is_unit_status_panel_point(self, sx: int, sy: int) -> bool:
+        """Return True when the screen point falls inside the combo box or dropdown."""
+        if self._unit_status_combobox_rect and self._unit_status_combobox_rect.collidepoint(sx, sy):
+            return True
+        return any(rect.collidepoint(sx, sy) for rect, _ in self._unit_status_dropdown_rects)
+
+    def is_unit_target_size_panel_point(self, sx: int, sy: int) -> bool:
+        """Return True when the point falls inside target-size input box."""
+        return self._unit_target_size_input_rect is not None and self._unit_target_size_input_rect.collidepoint(sx, sy)
+
+    def toggle_unit_status_dropdown(self) -> None:
+        """Toggle the unit status dropdown open/closed."""
+        self._unit_status_dropdown_open = not self._unit_status_dropdown_open
+
+    def is_unit_target_size_input_active(self) -> bool:
+        """Return True when target-size input has focus."""
+        return self._unit_target_size_input_active
+
+    def _draw_unit_status_panel(self, unit, panel_x: int, start_y: int, content_w: int, screen_h: int) -> int:
+        """Draw a combo box dropdown for unit status selection."""
+        self._unit_status_dropdown_rects = []
+        self._unit_status_combobox_rect = None
+
+        options = self._get_unit_status_options(unit)
+        if not options:
+            return start_y
+
+        base = self.ui_font.size("A")[1]
+        title_font = pygame.font.Font(None, max(18, base + 6))
+        item_font = pygame.font.Font(None, max(14, base + 2))
+        heading = title_font.render("Status", True, (240, 240, 240))
+        self.screen.blit(heading, (panel_x, start_y))
+
+        combobox_top = start_y + max(22, base + 8)
+        combobox_height = max(26, base + 14)
+        combobox_rect = pygame.Rect(panel_x, combobox_top, content_w, combobox_height)
+        self._unit_status_combobox_rect = combobox_rect
+
+        current_status = getattr(unit, "status", None)
+        current_label = self._get_status_label(current_status)
+
+        pygame.draw.rect(self.screen, (42, 48, 56), combobox_rect, border_radius=4)
+        pygame.draw.rect(self.screen, (120, 120, 120), combobox_rect, 1, border_radius=4)
+
+        text = self._fit_text(current_label, content_w - 20)
+        text_surface = item_font.render(text, True, (245, 245, 245))
+        text_rect = text_surface.get_rect(midleft=(panel_x + 8, combobox_rect.centery))
+        self.screen.blit(text_surface, text_rect)
+
+        if self._unit_status_dropdown_open:
+            dropdown_top = combobox_top + combobox_height + 2
+            item_height = max(22, base + 10)
+            for index, (status_code, label, is_current) in enumerate(options):
+                item_rect = pygame.Rect(panel_x, dropdown_top + (index * item_height), content_w, item_height)
+                fill_color = (70, 110, 150) if is_current else (55, 60, 70)
+                pygame.draw.rect(self.screen, fill_color, item_rect)
+                pygame.draw.rect(self.screen, (100, 100, 100), item_rect, 1)
+
+                item_text = self._fit_text(label, content_w - 16)
+                item_surface = item_font.render(item_text, True, (240, 240, 240))
+                item_text_rect = item_surface.get_rect(midleft=(panel_x + 8, item_rect.centery))
+                self.screen.blit(item_surface, item_text_rect)
+
+                self._unit_status_dropdown_rects.append((item_rect, status_code))
+
+            dropdown_bottom = dropdown_top + (len(options) * item_height)
+            return dropdown_bottom
+        else:
+            return combobox_top + combobox_height
+
+    def _draw_unit_target_size_panel(self, unit, panel_x: int, start_y: int, content_w: int) -> int:
+        """Draw target-size text input when at home; otherwise show explanation text."""
+        self._unit_target_size_input_rect = None
+
+        if getattr(unit, "location", None) != getattr(unit, "home", None):
+            self._unit_target_size_input_active = False
+            message_font = pygame.font.Font(None, max(14, self.ui_font.size("A")[1] + 1))
+            msg = "unit can't change it's size because its not at home,"
+            fitted = self._fit_text(msg, content_w)
+            if fitted:
+                self.screen.blit(message_font.render(fitted, True, (230, 200, 200)), (panel_x, start_y))
+            return start_y + (message_font.get_linesize() + 6)
+
+        base = self.ui_font.size("A")[1]
+        title_font = pygame.font.Font(None, max(18, base + 6))
+        item_font = pygame.font.Font(None, max(14, base + 2))
+        heading = title_font.render("Target Size", True, (240, 240, 240))
+        self.screen.blit(heading, (panel_x, start_y))
+
+        input_top = start_y + max(22, base + 8)
+        input_h = max(26, base + 14)
+        input_rect = pygame.Rect(panel_x, input_top, content_w, input_h)
+        self._unit_target_size_input_rect = input_rect
+
+        if not self._unit_target_size_input_active:
+            self._unit_target_size_input_text = str(int(getattr(unit, "targetsize", getattr(unit, "soldiers", 0))))
+
+        current_target = int(getattr(unit, "targetsize", getattr(unit, "soldiers", 0)))
+        fill = (50, 56, 64) if self._unit_target_size_input_active else (42, 48, 56)
+        border = (160, 190, 230) if self._unit_target_size_input_active else (120, 120, 120)
+        pygame.draw.rect(self.screen, fill, input_rect, border_radius=4)
+        pygame.draw.rect(self.screen, border, input_rect, 1, border_radius=4)
+
+        if self._unit_target_size_input_active:
+            # Keep empty text visible while editing and show a blinking cursor.
+            cursor = "|" if (pygame.time.get_ticks() // 450) % 2 == 0 else ""
+            show_text = f"{self._unit_target_size_input_text}{cursor}"
+        else:
+            show_text = str(current_target)
+
+        text = self._fit_text(show_text, content_w - 20)
+        text_surface = item_font.render(text, True, (245, 245, 245))
+        text_rect = text_surface.get_rect(midleft=(panel_x + 8, input_rect.centery))
+        self.screen.blit(text_surface, text_rect)
+        hint = self._fit_text("Type number and press Enter", content_w)
+        if hint:
+            self.screen.blit(item_font.render(hint, True, (205, 205, 205)), (panel_x, input_rect.bottom + 3))
+        return input_rect.bottom + item_font.get_linesize() + 3
     
+    def _draw_single_unit(self, unit, cx: int, cy: int, unit_size: int, draw_icon: bool, show_stats: bool, text_font: "pygame.font.Font") -> None:
+        """Render one unit box centred on (cx, cy) and cache its screen rect."""
+        half = unit_size // 2
+        rect = pygame.Rect(cx - half, cy - half, unit_size, unit_size)
+        self._unit_screen_rects[unit.id] = rect
+
+        color = self._get_unit_color(unit)
+        pygame.draw.rect(self.screen, color, rect)
+        pygame.draw.rect(self.screen, (0, 0, 0), rect, 2)
+
+        if draw_icon:
+            raw_icon = self._get_unit_icon(unit, 128)
+            if raw_icon is not None:
+                icon = self._get_scaled_surface_to_fit(raw_icon, unit_size - 6, int(unit_size * 0.55))
+                if icon is not None:
+                    self.screen.blit(icon, icon.get_rect(midtop=(rect.centerx, rect.top + 3)))
+
+        if show_stats:
+            fh = text_font.get_linesize()
+            max_tw = unit_size - 6
+
+            def _fit(txt: str) -> str:
+                if text_font.size(txt)[0] <= max_tw:
+                    return txt
+                while txt and text_font.size(txt + "…")[0] > max_tw:
+                    txt = txt[:-1]
+                return txt + "…" if txt else ""
+
+            bottom = rect.bottom - 1
+            stat_line = _fit(self._get_unit_stat_line(unit))
+            if stat_line:
+                s = text_font.render(stat_line, True, (0, 0, 0))
+                self.screen.blit(s, s.get_rect(midbottom=(rect.centerx, bottom)))
+                bottom -= fh
+            status_text = _fit(self._get_unit_status_text(unit))
+            if status_text:
+                s = text_font.render(status_text, True, (0, 0, 0))
+                self.screen.blit(s, s.get_rect(midbottom=(rect.centerx, bottom)))
+                bottom -= fh
+            name_text = _fit(str(getattr(unit, "name", "")))
+            if name_text:
+                s = text_font.render(name_text, True, (0, 0, 0))
+                self.screen.blit(s, s.get_rect(midbottom=(rect.centerx, bottom)))
+
     def draw_units(self) -> None:
-        """Draw all units on the map as zoom-scaled colored squares."""
+        """Draw all units grouped by province; same nation stacks vertically, different nations side-by-side."""
         unit_size = self._get_unit_draw_size()
-        half_size = unit_size // 2
         draw_icon = unit_size >= 40
         show_stats = unit_size >= 55
-        status_font = pygame.font.Font(None, max(16, unit_size // 4 + 2))
-        stat_font = pygame.font.Font(None, max(18, unit_size // 4 + 4))
-        
+        text_font = pygame.font.Font(None, max(14, unit_size // 5))
+        gap = 3
+
         armies = getattr(self.game, "armies", {})
         if not armies:
             return
-        
+
+        self._unit_screen_rects = {}
+
+        # Group visible units: province_id -> nation_tag -> [unit]
+        province_groups: Dict[int, Dict[str, list]] = {}
         for army in armies.values():
             for unit in army.get_all_units():
-                pos = self._get_unit_screen_position(unit)
-                if pos is None:
+                if not self._is_unit_visible_to_player(unit):
                     continue
-                
-                sx, sy = pos
-                color = self._get_unit_color(unit)
-                
-                rect = pygame.Rect(sx - half_size, sy - half_size, unit_size, unit_size)
-                pygame.draw.rect(self.screen, color, rect)
-                pygame.draw.rect(self.screen, (0, 0, 0), rect, 2)
+                loc = getattr(unit, "location", None)
+                if loc is None:
+                    continue
+                nation = getattr(unit, "nation", "")
+                if loc not in province_groups:
+                    province_groups[loc] = {}
+                if nation not in province_groups[loc]:
+                    province_groups[loc][nation] = []
+                province_groups[loc][nation].append(unit)
 
-                if draw_icon:
-                    raw_icon = self._get_unit_icon(unit, 128)
-                    if raw_icon is not None:
-                        max_icon_w = unit_size - 6
-                        max_icon_h = int(unit_size * 0.55)
-                        icon = self._get_scaled_surface_to_fit(raw_icon, max_icon_w, max_icon_h)
-                        if icon is not None:
-                            icon_rect = icon.get_rect(midtop=(rect.centerx, rect.top + 3))
-                            self.screen.blit(icon, icon_rect)
+        for province_id, nation_dict in province_groups.items():
+            province = self.game.map.get_province_by_id(province_id)
+            if province is None:
+                continue
+            center = self._get_province_center(province)
+            cx, cy = self.world_to_screen(center[0], center[1])
 
-                if show_stats:
-                    status_text = self._fit_text(self._get_unit_status_text(unit), unit_size - 8)
-                    if status_text:
-                        status_surface = status_font.render(status_text, True, (235, 235, 235))
-                        status_rect = status_surface.get_rect(midbottom=(rect.centerx, rect.bottom - 17))
-                        self.screen.blit(status_surface, status_rect)
+            nations = list(nation_dict.keys())
+            num_cols = len(nations)
+            total_w = num_cols * unit_size + (num_cols - 1) * gap
+            # x centre of leftmost column
+            col_start_x = cx - total_w // 2 + unit_size // 2
 
-                    stat_line = self._get_unit_stat_line(unit)
-                    if stat_line:
-                        stat_surface = stat_font.render(stat_line, True, (230, 230, 230))
-                        stat_rect = stat_surface.get_rect(midbottom=(rect.centerx, rect.bottom - 3))
-                        self.screen.blit(stat_surface, stat_rect)
+            for col_idx, nation_tag in enumerate(nations):
+                col_cx = col_start_x + col_idx * (unit_size + gap)
+                for row_idx, unit in enumerate(nation_dict[nation_tag]):
+                    unit_cy = cy + row_idx * (unit_size + gap)
+                    self._draw_single_unit(unit, col_cx, unit_cy, unit_size, draw_icon, show_stats, text_font)
     
     def get_unit_at_point(self, wx: float, wy: float):
-        """Get the unit at a given world position, if any."""
-        unit_size = self._get_unit_draw_size()
-        half_size = unit_size // 2
+        """Get the unit at a given world position using cached screen rects."""
         test_sx, test_sy = self.world_to_screen(wx, wy)
-        
+
         armies = getattr(self.game, "armies", {})
-        if not armies:
-            return None
-        
         for army in armies.values():
             for unit in army.get_all_units():
-                pos = self._get_unit_screen_position(unit)
-                if pos is None:
-                    continue
-                
-                sx, sy = pos
-                rect = pygame.Rect(sx - half_size, sy - half_size, unit_size, unit_size)
-                if rect.collidepoint(test_sx, test_sy):
+                rect = self._unit_screen_rects.get(unit.id)
+                if rect is not None and rect.collidepoint(test_sx, test_sy):
                     return unit
-        
         return None
 
     def _find_unit_by_id(self, unit_id):
@@ -590,15 +959,17 @@ class Graphics:
         speed_text = f"Speed: x{speed:.1f}"
 
         text_color = (245, 245, 245)
-        blit_fitted_text(status_text, 4)
-        blit_fitted_text(time_text, 18)
-        blit_fitted_text(speed_text, 32)
+        line_h = self.ui_font.get_linesize()
+        top_y = max(4, line_h // 4)
+        blit_fitted_text(status_text, top_y)
+        blit_fitted_text(time_text, top_y + line_h)
+        blit_fitted_text(speed_text, top_y + line_h * 2)
 
         selected_id = getattr(self.game, "unit_selected", 0)
         selected_province_id = getattr(self.game, "province_selected", 0)
         panel_x = content_x
-        panel_y = 56
-        preview_size = max(70, min(110, content_w))
+        panel_y = top_y + line_h * 3 + 12
+        preview_size = max(90, min(160, content_w))
         line_h = self.ui_font.get_linesize()
 
         unit = self._find_unit_by_id(selected_id) if selected_id else None
@@ -613,8 +984,35 @@ class Graphics:
             blit_fitted_text(f"Unit: {unit.id}", data_y)
             blit_fitted_text(f"Nation: {unit.nation}", data_y + line_h)
             blit_fitted_text(f"Prov: {unit.location}", data_y + (line_h * 2))
-            blit_fitted_text(f"Status: {getattr(unit, 'status', 1)}", data_y + (line_h * 3))
+            blit_fitted_text(f"Home: {getattr(unit, 'home', '-')}", data_y + (line_h * 3))
+            blit_fitted_text(f"Soldiers: {getattr(unit, 'soldiers', 0)}", data_y + (line_h * 4))
+            blit_fitted_text(f"Target Size: {getattr(unit, 'targetsize', getattr(unit, 'soldiers', 0))}", data_y + (line_h * 5))
+            blit_fitted_text(f"Status: {self._get_status_label(getattr(unit, 'status', 1))}", data_y + (line_h * 6))
+            blit_fitted_text(f"Morale: {getattr(unit, 'morale', 100)}", data_y + (line_h * 7))
+            blit_fitted_text(f"Org: {getattr(unit, 'organization', 100)}", data_y + (line_h * 8))
+            blit_fitted_text(f"Supply: {getattr(unit, 'suply', 0)}", data_y + (line_h * 9))
+            blit_fitted_text(f"Ammo: {getattr(unit, 'ammo', 0)}", data_y + (line_h * 10))
+            blit_fitted_text(f"Fuel: {getattr(unit, 'fuel', 0)}", data_y + (line_h * 11))
+            blit_fitted_text(f"Sup Rate: {getattr(unit, 'suply_consumption', 0)}", data_y + (line_h * 12))
+            blit_fitted_text(f"Ammo Rate: {getattr(unit, 'ammo_consumption', 0)}", data_y + (line_h * 13))
+            blit_fitted_text(f"Fuel Rate: {getattr(unit, 'suply_fuel_consumption', 0)}", data_y + (line_h * 14))
+            blit_fitted_text(f"Logistic value: {getattr(unit, 'logistic_value', 0)}", data_y + (line_h * 15))
+            if self.can_edit_unit_status(unit):
+                next_y = self._draw_unit_target_size_panel(unit, panel_x, data_y + (line_h * 16) + 6, content_w)
+                self._draw_unit_status_panel(unit, panel_x, next_y + 8, content_w, self.screen.get_height())
+            else:
+                self._unit_status_dropdown_rects = []
+                self._unit_status_combobox_rect = None
+                self._unit_status_dropdown_open = False
+                self._unit_target_size_input_rect = None
+                self._unit_target_size_input_active = False
             return
+
+        self._unit_status_dropdown_rects = []
+        self._unit_status_combobox_rect = None
+        self._unit_status_dropdown_open = False
+        self._unit_target_size_input_rect = None
+        self._unit_target_size_input_active = False
 
         if not selected_province_id:
             return
@@ -648,18 +1046,19 @@ class Graphics:
             return
 
         blit_fitted_text(f"Pop: {province_obj.population}", data_y + (line_h * 4))
-        blit_fitted_text(f"Recruit: {province_obj.province_recrutable}", data_y + (line_h * 5))
-        blit_fitted_text(f"Soldiers: {province_obj.province_soldiers}", data_y + (line_h * 6))
-        blit_fitted_text(f"Buildings: {len(province_obj.buildings)}", data_y + (line_h * 7))
+        blit_fitted_text(f"Current Recruits: {province_obj.province_recruits}", data_y + (line_h * 5))
+        blit_fitted_text(f"Max Recruits: {province_obj.province_recrutable}", data_y + (line_h * 6))
+        blit_fitted_text(f"Soldiers: {province_obj.province_soldiers}", data_y + (line_h * 7))
+        blit_fitted_text(f"Buildings: {len(province_obj.buildings)}", data_y + (line_h * 8))
         blit_fitted_text(
             f"U Here/Home: {len(province_obj.units_in_here)}/{len(province_obj.units_from_here)}",
-            data_y + (line_h * 8),
+            data_y + (line_h * 9),
         )
         blit_fitted_text(
             f"Sup/Food/Fuel: {province_obj.suply}/{province_obj.food}/{province_obj.fuel}",
-            data_y + (line_h * 9),
+            data_y + (line_h * 10),
         )
-        blit_fitted_text(f"Ammo: {province_obj.ammo}", data_y + (line_h * 10))
+        blit_fitted_text(f"Ammo: {province_obj.ammo}", data_y + (line_h * 11))
 
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)
@@ -672,10 +1071,16 @@ class Graphics:
         province_overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
         for province in self.game.map.get_all_provinces():
             fill_r, fill_g, fill_b = self._get_province_color(province)
+            province_visible = self._province_is_visible_under_fog(province)
+            border_color = (60, 60, 60) if province_visible else (30, 30, 30)
+            fill_alpha = 90 if province_visible else 150
+            if self.fog_of_war and not province_visible:
+                fill_r, fill_g, fill_b = self._shade_color((fill_r, fill_g, fill_b), 0.35)
+
             for polygon in province["polygons"]:
                 transformed = [self.world_to_screen(x, y) for x, y in polygon]
-                pygame.draw.polygon(province_overlay, (fill_r, fill_g, fill_b, 90), transformed)
-                pygame.draw.polygon(self.screen, (60, 60, 60), transformed, 1)
+                pygame.draw.polygon(province_overlay, (fill_r, fill_g, fill_b, fill_alpha), transformed)
+                pygame.draw.polygon(self.screen, border_color, transformed, 1)
         self.screen.blit(province_overlay, (0, 0))
 
         # Draw nearby province connections on top if enabled

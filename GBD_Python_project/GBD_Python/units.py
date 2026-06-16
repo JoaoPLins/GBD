@@ -38,7 +38,7 @@ class Unit:
         self.attack = attack
         self.defense = defense
         self.speed = speed
-        self.transport_V = 0
+        self.transport_V = 0 #amount of trucks
         self.transport_H = logistics #amount of horses
         self.logistics_value = 0 # ammount of suply + ammo + equipment + fuel.  
         self.suply = suply # this is basically food; could consider basic necesseties... 
@@ -60,11 +60,18 @@ class Unit:
         self.spoted_by = []
         self.visibility = 0
         self.unitCurrentSpoting = 0
+        self.suply_consumption = 0
+        #to be implemented on units battles
+        self.ammo_consumption = 0
+        #to be implement on after the first demo.
+        self.suply_fuel_consumption = 0
         #totalUnits += 1
 
         self.update_dectectability()
         self.update_spotting()
         self.calculate_visibility()
+        self.calculate_logistics_value()
+
 
     def return_status(self):
         #refractor this in the future. maybe using @proprety for it and dictionaries. to study
@@ -201,6 +208,10 @@ class Unit:
         elif self.status == 13:
             self.unit_dectectability = 100
 
+    def return_home(self):
+        #returns true if the unit is in its home province, false otherwise.
+        return self.home
+
     def calculate_visibility(self):
         #calculates the visibility on the unit instead of doing everytime in the simulation. future update will add this value with other simulated situations like terrain weather.
         self.visibility = (self.unit_dectectability * (self.soldiers))//1000
@@ -266,7 +277,12 @@ class Unit:
 
     def add_soldiers(self, number):
         #adds soldiers to the unit, up to the target size.
-        soldiers += number
+        self.soldiers += number
+
+    def set_target_size(self, number):
+        #sets the target size of the unit, which is the number of soldiers it should have when fully mobilized.
+        if self.home == self.location:
+            self.targetsize = number 
 
     def is_spotted(self):
         #returns true if the unit is spotted by any other unit, false otherwise.
@@ -288,6 +304,9 @@ class Unit:
         if self.spotting_quality[dx] <101:
             self.spotting_quality[dx] += new_value
             print(f"Updated spotting quality for unit {unit_id} to {self.spotting_quality[dx]}")
+        else:
+            print(f"Spotting quality for unit {unit_id} is already at maximum (100). No update applied.")
+            self.spotting_quality[dx] = 100
 
     def pop_the_unit_from_unit_spoted(self, unit_id):
         #removes a unit id from the list of units that have spotted this unit.
@@ -299,7 +318,40 @@ class Unit:
             return True
         except ValueError:
             return False
-        
+
+    def add_soldiers(self,number):  
+        #adds soldiers to the unit, up to the target size.
+        self.soldiers += number
+
+
+    def add_suply(self, amount):
+        #adds suply to the unit, up to the logistics capacity.
+        self.suply += amount
+
+    def calculate_logistics_value(self):
+        #calculates the logistics value of the unit, or the max suply they can cary without penalties (logistics units will be implemented later)
+        print(f"calculating logistics value of unit {self.id}")
+        self.logistics_value = (self.transport_V*100) + (self.transport_H*20) + self.soldiers *5  
+    
+    def calculate_logistic_consumption(self):
+        #calculates the logistics consumption of the unit, which is the amount of suply they consume per turn.
+        print(f"calculating logistics consumption of unit {self.id}")
+        self.suply_consumption = self.soldiers 
+
+    def calculate_logistic_request(self):
+        #will require to call ammo as well. and if it loses equipment. 
+        self.suply_request = self.suply_consumption + 50 
+        if self.suply <= self.logistics_value:
+            #might change this depending on how it goes. I don't want suply to get too high and not being able to take amo into the unit. 
+            self.suply_request = self.suply_consumption
+
+    def use_suply(self):
+        #uses the suply of the unit, reducing it by the amount of suply consumption.
+        if self.suply >= self.suply_consumption:
+            self.suply -= self.suply_consumption
+        else:
+            self.suply = 0
+
 class MergedUnit:
     
     def __init__(self,id):

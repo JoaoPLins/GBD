@@ -36,11 +36,12 @@ class building:
 
         produced_food = 0
         produced_fuel = 0
+        produced_suply = 0
         
 
         if self.building_type == 3:
             # civil industry produces province supply that is stored in this building
-            self.suply_storage += int(100 * production_factor)
+            produced_suply = int(40000 * production_factor)
         elif self.building_type == 4:
             # farm produces food directly
             produced_food = int(50 * production_factor)
@@ -52,9 +53,10 @@ class building:
             produced_fuel = int(500 * production_factor)
 
 
-        return produced_food, produced_fuel
+        return produced_food, produced_fuel, produced_suply
 
     def recruitment(self):
+        #this might change. 
         production_factor = self.building_level * (self.production / 100)
         if self.building_type == 5:
             # army base provides daily recruit capacity
@@ -161,13 +163,14 @@ class Province:
         self.food = 0
         self.ammo = 0
 
-        #here its just for calculating the recruitment ammount; 
+        #here its just for calculating the recruitment ammount; this is broken, gonna implement differently. 
         self.units_in_here = []
         self.units_from_here = []
         self.units_recrinting_here = []
 
         #ammount of possible recuits 
         self.province_recrutable = 0
+        self.province_recruits = 100
         
         #number of soldiers in the province( active and reserve)
         self.province_soldiers = 0
@@ -180,36 +183,46 @@ class Province:
         #first check the production of the buildings.
         produced_food = 0
         produced_fuel = 0
+        produced_suply = 0
+        recruits = 0
 
         for building in self.buildings:
-            food_gain, fuel_gain = building.production_update()
+            food_gain, fuel_gain, suply_gain  = building.production_update()
             produced_food += food_gain
             produced_fuel += fuel_gain
+            produced_suply += suply_gain
 
-            for unit in self.units_recrinting_here:
-                if unit.return_soldiers_target_delta() > 0:
-                    # If the unit still needs soldiers, try to recruit.
-                    building_recruits = building.recruitment()
-                    unit.add_soldiers(building_recruits)
-                    self.province_soldiers += building_recruits
-                    self.province_recrutable -= building_recruits
+            recruits += building.recruitment()
 
+            #this didn't work. 
+            #for unit in self.units_recrinting_here:
+            #    if unit.return_soldiers_target_delta() > 0:
+            #        # If the unit still needs soldiers, try to recruit.
+            #        building_recruits = building.recruitment()
+            #        #this is not working but uh maybe I gonna end up with that twice?
+            #        unit.add_soldiers(building_recruits)
+            #        self.province_soldiers += building_recruits
+            #        self.province_recrutable -= building_recruits
             
+        
             
 
         self.food += produced_food
         self.fuel += produced_fuel
+        if self.province_recrutable >= self.province_recruits + recruits:
+            self.province_recruits += recruits
+        
 
         # Province totals are derived from building storage.
         self.ammo = sum(b.ammo_storage for b in self.buildings)
-        self.suply = min(self.maxsuply, sum(b.suply_storage for b in self.buildings))
+        self.suply += produced_suply
             
 
     def define_population(self,population):
         self.population = population    
 
     def load_extra_data(self):
-        #this is where the we get the extra data from the province and calculate the new values. 
+        #this is where the we get the extra data from the province and calculate the new values. for loading a new map
         self.calculate_size()
         self.Generate_starting_buildings()
         self.infrastructure = self.size
@@ -220,7 +233,14 @@ class Province:
         self.province_recrutable = self.population // 100
 
     def add_soldiers(self, soldiers):
-        self.province_soldiers += soldiers    
+        self.province_soldiers += soldiers
+        self.province_recruits -= soldiers
+
+    def kill_soldiers(self, soldiers):
+        self.province_soldiers -= soldiers
+    
+    def transfer_suply(self, suply):
+        self.suply -= suply        
 
     def calculate_max_suply(self):
         #this is where we calculate the max suply of the province based on the buildings it has. (lvls will mutiply the value by the level)
@@ -270,6 +290,7 @@ class Province:
             self.add_building(1,5)
             self.add_building(2,3)
             self.add_building(3,7)
+            #lmao this is wrong
             if self.iswater == 1:
                 self.add_building(4,1)
                 #self.add_building(5,2) # this is the shipyard, but it is not implemented yet.
@@ -296,17 +317,28 @@ class Province:
         self.iscapital = 1
     
     def calculate_size(self):
-        
+        #I remember thisnow but I'm not sure yet what this was for max building slots 
+        #capital has the max
         if self.iscapital == 1:
             self.size = 6
+        #nothing on water    
         elif self.iswater == 1:
             self.size = 0
+        #plains is 5
         elif self.terrain == 1:
             self.size = 5
+        #hills is 4
         elif self.terrain == 2:
             self.size = 4
+        #mountains is 3
         elif self.terrain == 3:
             self.size = 3
         else:
             self.size = 3
+
+    def return_buildings(self):
+        return self.buildings
+    
+    def return_suply(self):
+        return self.suply
         

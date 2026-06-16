@@ -86,6 +86,8 @@ class Simulation(threading.Thread):
 		self._process_mobilization()
 		self._process_movements()
 		self.Unit_spotting()
+		self.Unit_tick()
+
 		#self.combat()
 
 	def _process_mobilization(self) -> None:
@@ -345,6 +347,42 @@ class Simulation(threading.Thread):
 			for unit in army.units.values():
 				unit.update_spotting()
 				self.spotting(unit, unit.location)
+
+	def Unit_tick(self):
+		for army in self.armies.values():
+			for unit in army.units.values():
+				self.unit_simulation(unit.id)
+
+	def unit_simulation(self, unit_id):
+		unit = self._find_unit_by_id(unit_id)
+		if unit is None:
+			return
+		province = self.game_map.get_province_object_by_id(unit.location)
+		unit_home = unit.return_home()
+		if unit_home == unit.location:
+			if unit.soldiers < unit.targetsize:
+				if unit.status == 2 or unit.status == 13:
+					if province.province_recruits > 100:
+						unit.add_soldiers(100)
+						province.add_soldiers(100)
+		
+		unit.calculate_logistic_consumption()
+
+		if province.return_suply() > 0:
+			unit.calculate_logistic_request()
+			if unit.suply_request > province.suply:
+				#for now it won't take into account other units in the same province... to change this to let the player set prioririties or home priority.
+				unit.add_suply(province.suply)
+				province.transfer_suply(province.suply)
+			else:
+				unit.add_suply(unit.suply_request)
+				province.transfer_suply(unit.suply_request)
+			
+			unit.use_suply()
+		#think this is it for now correct?
+			
+		
+		
 
 	def combat(self, province_id):
 		pass

@@ -5,7 +5,7 @@ from game import Game
 
 def main() -> None:
     # Create and run the game app.
-    
+    nation = "URU"
     # TODO: load configs
     print("main gameloopstarter")
     gameStatus = 2
@@ -16,7 +16,7 @@ def main() -> None:
 
         elif gameStatus == 2:
             print("game loading")
-            game = Game()
+            game = Game(1920, 1080, nation)
             gameStatus = 3
 
         elif gameStatus == 1:

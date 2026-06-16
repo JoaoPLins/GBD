@@ -1,4 +1,4 @@
-# Strategy Game Prototype Plan
+# Strategy Game Prototype Plan 
 
 ## A. Create Base Map
 - Create a map of **South America** with provinces. ✅
@@ -30,9 +30,9 @@ Additional attributes may be added later if needed.
 - Implement **province collision detection**.✅
 
 ## D. Gameplay Prototype
-- Create **units**.
-- Create **buildings**.
-- Implement **movement across provinces**.
+- Create **units**.✅
+- Create **buildings**.✅
+- Implement **movement across provinces**.✅
 
 ---
 
@@ -40,6 +40,39 @@ Additional attributes may be added later if needed.
 
 The first test should demonstrate:
 
-1. Map loading.
-2. Province detection (click / collision).
-3. Units moving between provinces.
+1. Map loading.✅
+2. Province detection (click / collision).✅
+3. Units moving between provinces.✅
+
+# Phase 2 (simulation): 
+
+## A. work on the simulation 
+    1. unit moviment behavior ✅
+    2. province behavioir
+    3. unit x province behavior
+    4. Suply usage and Suply moviment
+    5. Implement naval units 
+
+
+## B. Combat
+    land combat:
+    1. combat phases 
+    2. combat rolls
+    3. combat retreat 
+    4. combat balancing
+    naval combat 
+    1. combat phases 
+    2. combat rolls
+    3. combat retreat 
+    4. combat balancing    
+
+
+## c. new map image 
+    1.  a map ta looks pretty 
+
+## d. add historical Units and program civil war mechanic
+    
+    1. add generals and people
+    2. program their influence and chain. 
+    3. loyalty values in unit 
+    4.  
