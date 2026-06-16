@@ -131,6 +131,10 @@ class Unit:
             new_status: New status code to set for the unit
         """
         self.status = new_status
+        if new_status == 0:
+            self.demobilize()
+        if new_status == 11:
+            self.organization = 10
         self.update_dectectability()
         self.update_spotting()
         self.calculate_visibility()
@@ -230,7 +234,7 @@ class Unit:
             self.soldiers = self.soldiers * 0.1
             self.reserve = self.reserve - self.soldiers
         
-        self.update_status(0)
+        #self.update_status(0)  OOOPS
     
     def mobilize(self,soldiers_delta):
         #mobilizes the unit, setting soldiers to targetsize and status to deployed
@@ -243,6 +247,9 @@ class Unit:
 
             self.soldiers += soldiers_delta
             self.reserve -= soldiers_delta
+            if self.organization < 100:
+                self.organization += 10
+            
 
 
         else:
@@ -251,22 +258,27 @@ class Unit:
     def possible_status(self):
         #returns a list of possible status for the unit to be set by the player.
         possiblestatus = []
-        possiblestatus.append(5) #defending is always an option
-        if self.location == self.home:
-            possiblestatus.append(0) #reserve
-            possiblestatus.append(2) #quartered
-            possiblestatus.append(4) #resting
-        if self.organization > 10:
-            possiblestatus.append(3) #moving
-            possiblestatus.append(4) #resting
-        if self.organization > 25:
-            possiblestatus.append(7) #securing province
-            possiblestatus.append(10) #attacking
-        if self.organization > 50:
-            possiblestatus.append(1) #deployed
-            possiblestatus.append(6) #improving defenses
-        if self.organization > 75:
-            possiblestatus.append(9) #guerrila/recon
+        if self.status != 0 and self.status != 11:
+            possiblestatus.append(5) #defending is always an option
+            if self.location == self.home:
+                possiblestatus.append(0) #reserve
+                possiblestatus.append(2) #quartered
+                possiblestatus.append(4) #resting
+            if self.organization > 10:
+                possiblestatus.append(3) #moving
+                possiblestatus.append(4) #resting
+            if self.organization > 25:
+                possiblestatus.append(7) #securing province
+                possiblestatus.append(10) #attacking
+            if self.organization > 50:
+                possiblestatus.append(1) #deployed
+                possiblestatus.append(6) #improving defenses
+            if self.organization > 75:
+                possiblestatus.append(9) #guerrila/recon
+        else: 
+            if self.reserve > 0:
+                possiblestatus.append(11) #mobilizing
+
 
         return possiblestatus
 

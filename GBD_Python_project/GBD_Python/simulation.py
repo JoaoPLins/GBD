@@ -379,6 +379,9 @@ class Simulation(threading.Thread):
 				province.transfer_suply(unit.suply_request)
 			
 			unit.use_suply()
+
+		if unit.status == 11:
+			unit.mobilize(10*province.infrastructure)
 		#think this is it for now correct?
 			
 		
