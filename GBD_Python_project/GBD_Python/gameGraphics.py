@@ -26,6 +26,7 @@ class Graphics:
         self.ui_font: pygame.font.Font = pygame.font.Font(None, _ui_font_size)
         self._unit_portrait_cache: Dict[str, Optional[pygame.Surface]] = {}
         self._unit_icon_cache: Dict[str, Optional[pygame.Surface]] = {}
+        self._unit_flag_cache: Dict[str, Optional[pygame.Surface]] = {}
         self.fog_of_war = 1 #0 = off. 1 = on
         self.player_nation_tag = self._get_player_nation_tag()
         self._unit_status_dropdown_open: bool = False
@@ -35,6 +36,24 @@ class Graphics:
         self._unit_target_size_input_active: bool = False
         self._unit_target_size_input_text: str = ""
         self._unit_screen_rects: Dict[int, pygame.Rect] = {}
+        self._unit_draw_order: list[int] = []
+        self._unit_stack_hitboxes: list[tuple[pygame.Rect, list[int]]] = []
+        self._train_screen_rects: Dict[str, pygame.Rect] = {}
+        self._train_draw_order: list[str] = []
+        self._province_create_unit_button_rect: Optional[pygame.Rect] = None
+        self._province_create_logistics_button_rect: Optional[pygame.Rect] = None
+        self._province_logistics_hub_checkbox_rect: Optional[pygame.Rect] = None
+        self.people_button_image: Optional[pygame.Surface] = None
+        self.people_overlay_bg_image: Optional[pygame.Surface] = None
+        self.people_quit_button_image: Optional[pygame.Surface] = None
+        self._people_button_rect: Optional[pygame.Rect] = None
+        self._people_overlay_open: bool = False
+        self._people_overlay_rect: Optional[pygame.Rect] = None
+        self._people_overlay_quit_rect: Optional[pygame.Rect] = None
+        self._people_overlay_scroll_offset: int = 0
+        self._people_overlay_scrollbar_rect: Optional[pygame.Rect] = None
+        self._people_overlay_scrollbar_thumb_rect: Optional[pygame.Rect] = None
+        self._people_overlay_scrollbar_range: tuple = (0, 0)
         
         # Load base map if available
         self._load_base_map()
@@ -156,11 +175,52 @@ class Graphics:
                 try:
                     self.rbar_image = pygame.image.load(str(ui_path)).convert_alpha()
                     print(f"Loaded UI bar: {ui_path}")
-                    return
+                    break
                 except Exception as e:
                     print(f"Failed to load UI bar {ui_path}: {e}")
 
-        print("UI bar not found (expected Art/UI/RBar.png or Art/ui/RBar.png)")
+        if self.rbar_image is None:
+            print("UI bar not found (expected Art/UI/RBar.png or Art/ui/RBar.png)")
+
+        people_btn_candidates = [
+            self.art_path / "UI" / "peopleBtn.PNG",
+            self.art_path / "ui" / "peopleBtn.PNG",
+            self.art_path / "UI" / "peopleBtn.png",
+            self.art_path / "ui" / "peopleBtn.png",
+        ]
+        for btn_path in people_btn_candidates:
+            if btn_path.exists():
+                try:
+                    self.people_button_image = pygame.image.load(str(btn_path)).convert_alpha()
+                    break
+                except Exception as e:
+                    print(f"Failed to load People button {btn_path}: {e}")
+
+        people_bg_candidates = [
+            self.art_path / "UI" / "BackgroundUI.png",
+            self.art_path / "ui" / "BackgroundUI.png",
+        ]
+        for bg_path in people_bg_candidates:
+            if bg_path.exists():
+                try:
+                    self.people_overlay_bg_image = pygame.image.load(str(bg_path)).convert_alpha()
+                    break
+                except Exception as e:
+                    print(f"Failed to load people overlay background {bg_path}: {e}")
+
+        quit_btn_candidates = [
+            self.art_path / "UI" / "QuitBtn.PNG",
+            self.art_path / "ui" / "QuitBtn.PNG",
+            self.art_path / "UI" / "quitbtn.png",
+            self.art_path / "ui" / "quitbtn.png",
+        ]
+        for quit_path in quit_btn_candidates:
+            if quit_path.exists():
+                try:
+                    self.people_quit_button_image = pygame.image.load(str(quit_path)).convert_alpha()
+                    break
+                except Exception as e:
+                    print(f"Failed to load people quit button {quit_path}: {e}")
 
     def _load_base_map(self) -> None:
         """Load the base map image from Art/baseMap/provincemapbase.png"""
@@ -445,6 +505,38 @@ class Graphics:
         if lines_drawn == 0:
             print("WARNING: No nearby province lines drawn - check if nearby_provinces data is loaded")
 
+    def draw_rails(self, color: Tuple[int, int, int] = (205, 205, 205), width: int = 3) -> None:
+        """Draw rail lines by connecting the centers of provinces in each rail path."""
+        rails = getattr(self.game.map, "get_all_rails", lambda: [])()
+        if not rails:
+            return
+
+        underlay = (100, 100, 100)
+        cap_radius = max(2, width // 2)
+
+        for rail in rails:
+            points = rail.get("points", [])
+            if len(points) < 2:
+                continue
+
+            for idx in range(len(points) - 1):
+                start_province = self.game.map.get_province_by_id(points[idx])
+                end_province = self.game.map.get_province_by_id(points[idx + 1])
+                if not start_province or not end_province:
+                    continue
+
+                start_center = self._get_province_center(start_province)
+                end_center = self._get_province_center(end_province)
+                start_screen = self.world_to_screen(start_center[0], start_center[1])
+                end_screen = self.world_to_screen(end_center[0], end_center[1])
+                # Outline + light core keeps rails visible on mixed map colors.
+                pygame.draw.line(self.screen, underlay, start_screen, end_screen, width + 2)
+                pygame.draw.line(self.screen, color, start_screen, end_screen, width)
+                pygame.draw.circle(self.screen, underlay, start_screen, cap_radius + 1)
+                pygame.draw.circle(self.screen, color, start_screen, cap_radius)
+                pygame.draw.circle(self.screen, underlay, end_screen, cap_radius + 1)
+                pygame.draw.circle(self.screen, color, end_screen, cap_radius)
+
     def _get_unit_color(self, unit) -> Tuple[int, int, int]:
         """Get the color of a unit based on its nation."""
         manager = getattr(self.game, "nation_manager", None)
@@ -460,6 +552,74 @@ class Graphics:
             return rgb
         
         return (100, 100, 100)
+
+    def _get_train_color(self, train) -> Tuple[int, int, int]:
+        """Get train color based on nation color."""
+        manager = getattr(self.game, "nation_manager", None)
+        if manager is None:
+            return (170, 170, 170)
+
+        nation = manager.get_nation(getattr(train, "nation", None))
+        if nation is None:
+            return (170, 170, 170)
+
+        rgb = self._parse_rgb_color(nation.extra.get("color"))
+        return rgb if rgb is not None else (170, 170, 170)
+
+    def _draw_single_train(self, train, cx: int, cy: int, size: int) -> None:
+        """Draw one train marker and register click rect."""
+        rect = pygame.Rect(cx - size // 2, cy - size // 2, size, size)
+        train_id = str(getattr(train, "id", ""))
+        self._train_screen_rects[train_id] = rect
+        self._train_draw_order.append(train_id)
+
+        fill = self._shade_color(self._get_train_color(train), 0.85)
+        border = (20, 20, 20)
+        if str(getattr(self.game, "train_selected", "")) == train_id:
+            border = (255, 220, 110)
+
+        pygame.draw.rect(self.screen, fill, rect, border_radius=5)
+        pygame.draw.rect(self.screen, border, rect, 2, border_radius=5)
+
+        label_font = pygame.font.Font(None, max(12, size // 2))
+        label = label_font.render("T", True, (15, 15, 15))
+        self.screen.blit(label, label.get_rect(center=rect.center))
+
+    def draw_trains(self) -> None:
+        """Draw trains on map with unit-like markers."""
+        trains = getattr(self.game, "trains", {})
+        if not trains:
+            self._train_screen_rects = {}
+            self._train_draw_order = []
+            return
+
+        self._train_screen_rects = {}
+        self._train_draw_order = []
+
+        marker_size = max(12, int(self._get_unit_draw_size() * 0.52))
+        for train in trains.values():
+            province = self.game.map.get_province_by_id(getattr(train, "location", None))
+            if province is None:
+                continue
+
+            # Keep same visibility logic spirit as units under fog.
+            if self.fog_of_war and not self._province_is_visible_under_fog(province):
+                if not self._is_player_side_nation(getattr(train, "nation", None)):
+                    continue
+
+            center = self._get_province_center(province)
+            cx, cy = self.world_to_screen(center[0], center[1])
+            self._draw_single_train(train, cx, cy, marker_size)
+
+    def get_train_at_point(self, wx: float, wy: float):
+        """Return top-most clicked train from cached train rects."""
+        sx, sy = self.world_to_screen(wx, wy)
+        for train_id in reversed(self._train_draw_order):
+            rect = self._train_screen_rects.get(train_id)
+            if rect is None or not rect.collidepoint(sx, sy):
+                continue
+            return getattr(self.game, "trains", {}).get(str(train_id))
+        return None
     
     def _get_unit_screen_position(self, unit):
         """Get the screen position of a unit based on its location (province ID)."""
@@ -481,11 +641,33 @@ class Graphics:
         return int(20 + (65 * zoom_factor))
 
     def _get_unit_type_key(self, unit) -> str:
-        raw_name = str(getattr(unit, "name", "")).strip().lower()
-        if not raw_name:
-            return "unit"
+        type_aliases = {
+            1: "infantry",
+            2: "cav",
+            3: "arty",
+            4: "logi",
+            5: "hq",
+            6: "militia",
+            7: "engineer",
+            8: "mountaineer",
+        }
 
-        return raw_name.replace("-", "_").replace(" ", "_")
+        raw_type = getattr(unit, "type", None)
+        if raw_type is not None:
+            try:
+                type_id = int(raw_type)
+                if type_id in type_aliases:
+                    return type_aliases[type_id]
+            except (TypeError, ValueError):
+                type_str = str(raw_type).strip().lower()
+                if type_str:
+                    return type_str.replace("-", "_").replace(" ", "_")
+
+        raw_name = str(getattr(unit, "name", "")).strip().lower()
+        if raw_name:
+            return raw_name.replace("-", "_").replace(" ", "_")
+
+        return "unit"
 
     def _get_unit_icon(self, unit, size: int) -> Optional[pygame.Surface]:
         unit_key = self._get_unit_type_key(unit)
@@ -520,6 +702,38 @@ class Graphics:
         self._unit_icon_cache[cache_key] = None
         return None
 
+    def _get_unit_flag(self, unit, max_width: int, max_height: int) -> Optional[pygame.Surface]:
+        """Return scaled nation flag image for a unit, if available."""
+        nation_tag = str(getattr(unit, "nation", "")).strip().upper()
+        if not nation_tag:
+            return None
+
+        root_tag = self._get_root_nation_tag(nation_tag)
+        candidate_tags = [nation_tag]
+        if root_tag:
+            candidate_tags.append(str(root_tag).strip().upper())
+
+        for tag in candidate_tags:
+            cache_key = f"{tag}:{max_width}x{max_height}"
+            if cache_key in self._unit_flag_cache:
+                return self._unit_flag_cache[cache_key]
+
+            for image_path in (f"flags/{tag}.png", f"flags/{tag}.jpg"):
+                image = self.load_image(image_path)
+                if image is None:
+                    continue
+
+                try:
+                    scaled = self._get_scaled_surface_to_fit(image, max_width, max_height)
+                except Exception:
+                    scaled = None
+                self._unit_flag_cache[cache_key] = scaled
+                return scaled
+
+            self._unit_flag_cache[cache_key] = None
+
+        return None
+
     def _get_scaled_surface_to_fit(
         self,
         surface: pygame.Surface,
@@ -534,7 +748,24 @@ class Graphics:
         ratio = min(max_width / src_w, max_height / src_h)
         target_w = max(1, int(src_w * ratio))
         target_h = max(1, int(src_h * ratio))
-        return pygame.transform.smoothscale(surface, (target_w, target_h))
+
+        # Some image formats (palette/indexed) are not compatible with smoothscale.
+        # Convert first and fallback to regular scale if smoothscale still fails.
+        try:
+            return pygame.transform.smoothscale(surface, (target_w, target_h))
+        except Exception:
+            try:
+                converted = surface.convert_alpha()
+                return pygame.transform.smoothscale(converted, (target_w, target_h))
+            except Exception:
+                try:
+                    converted = surface.convert()
+                    return pygame.transform.scale(converted, (target_w, target_h))
+                except Exception:
+                    try:
+                        return pygame.transform.scale(surface, (target_w, target_h))
+                    except Exception:
+                        return None
 
     def _get_unit_stat_line(self, unit) -> str:
         """Return compact attack/defense string shown inside large unit boxes."""
@@ -572,6 +803,21 @@ class Graphics:
         }
         return labels.get(status_code, f"Status {status_code}")
 
+    @staticmethod
+    def _get_train_status_label(status_code: int) -> str:
+        labels = {
+            0: "Idle",
+            1: "Moving",
+            2: "Stopped",
+            3: "Loading",
+            4: "Unloading",
+            5: "Maintenance",
+            6: "Damaged",
+            7: "Disabled",
+            8: "Loading/Unloading Troops",
+        }
+        return labels.get(status_code, f"Status {status_code}")
+
     def _get_unit_status_options(self, unit) -> list[tuple[int, str, bool]]:
         """Return available unit status options as (code, label, is_current)."""
         possible_status_fn = getattr(unit, "possible_status", None)
@@ -588,6 +834,78 @@ class Graphics:
             options.append((status_code, self._get_status_label(status_code), status_code == current_status))
 
         return options
+
+    def _get_train_status_options(self, train) -> list[tuple[int, str, bool]]:
+        """Return available train status options as (code, label, is_current)."""
+        possible_status_fn = getattr(train, "return_possible_status", None)
+        if not callable(possible_status_fn):
+            return []
+
+        current_status = getattr(train, "status", None)
+        seen_statuses = set()
+        options: list[tuple[int, str, bool]] = []
+        for status_code in possible_status_fn():
+            if status_code in seen_statuses:
+                continue
+            seen_statuses.add(status_code)
+            options.append((status_code, self._get_train_status_label(status_code), status_code == current_status))
+
+        return options
+
+    def can_edit_train_status(self, train) -> bool:
+        """Return True when status controls should be shown for a train."""
+        return train is not None and self._is_player_side_nation(getattr(train, "nation", None))
+
+    def _draw_train_status_panel(self, train, panel_x: int, start_y: int, content_w: int) -> int:
+        """Draw combo box dropdown for train status selection."""
+        self._unit_status_dropdown_rects = []
+        self._unit_status_combobox_rect = None
+
+        options = self._get_train_status_options(train)
+        if not options:
+            return start_y
+
+        base = self.ui_font.size("A")[1]
+        title_font = pygame.font.Font(None, max(18, base + 6))
+        item_font = pygame.font.Font(None, max(14, base + 2))
+        heading = title_font.render("Train Status", True, (240, 240, 240))
+        self.screen.blit(heading, (panel_x, start_y))
+
+        combobox_top = start_y + max(22, base + 8)
+        combobox_height = max(26, base + 14)
+        combobox_rect = pygame.Rect(panel_x, combobox_top, content_w, combobox_height)
+        self._unit_status_combobox_rect = combobox_rect
+
+        current_status = getattr(train, "status", None)
+        current_label = self._get_train_status_label(current_status)
+
+        pygame.draw.rect(self.screen, (42, 48, 56), combobox_rect, border_radius=4)
+        pygame.draw.rect(self.screen, (120, 120, 120), combobox_rect, 1, border_radius=4)
+
+        text = self._fit_text(current_label, content_w - 20)
+        text_surface = item_font.render(text, True, (245, 245, 245))
+        text_rect = text_surface.get_rect(midleft=(panel_x + 8, combobox_rect.centery))
+        self.screen.blit(text_surface, text_rect)
+
+        if self._unit_status_dropdown_open:
+            dropdown_top = combobox_top + combobox_height + 2
+            item_height = max(22, base + 10)
+            for index, (status_code, label, is_current) in enumerate(options):
+                item_rect = pygame.Rect(panel_x, dropdown_top + (index * item_height), content_w, item_height)
+                fill_color = (70, 110, 150) if is_current else (55, 60, 70)
+                pygame.draw.rect(self.screen, fill_color, item_rect)
+                pygame.draw.rect(self.screen, (100, 100, 100), item_rect, 1)
+
+                item_text = self._fit_text(label, content_w - 16)
+                item_surface = item_font.render(item_text, True, (240, 240, 240))
+                item_text_rect = item_surface.get_rect(midleft=(panel_x + 8, item_rect.centery))
+                self.screen.blit(item_surface, item_text_rect)
+
+                self._unit_status_dropdown_rects.append((item_rect, status_code))
+
+            return dropdown_top + (len(options) * item_height)
+
+        return combobox_top + combobox_height
 
     def begin_unit_target_size_input(self, unit) -> None:
         """Focus target-size input and prefill with current value."""
@@ -671,6 +989,35 @@ class Graphics:
     def is_unit_target_size_input_active(self) -> bool:
         """Return True when target-size input has focus."""
         return self._unit_target_size_input_active
+
+    def can_create_unit_in_selected_province(self, province: dict, province_obj) -> bool:
+        """Return True when the selected province can spawn a new unit."""
+        if province is None or province_obj is None:
+            return False
+
+        if not self._province_is_player_controlled(province):
+            return False
+
+        return getattr(province_obj, "province_recruits", 0) > 0
+
+    def can_toggle_logistic_hub_in_selected_province(self, province: dict, province_obj) -> bool:
+        """Return True when player-side ownership/control allows editing hub state."""
+        if province is None or province_obj is None:
+            return False
+
+        return self._province_is_player_controlled(province)
+
+    def is_province_create_unit_panel_point(self, sx: int, sy: int) -> bool:
+        """Return True when a click lands on the province recruit button."""
+        return self._province_create_unit_button_rect is not None and self._province_create_unit_button_rect.collidepoint(sx, sy)
+
+    def is_province_create_logistics_panel_point(self, sx: int, sy: int) -> bool:
+        """Return True when a click lands on the province logistics recruit button."""
+        return self._province_create_logistics_button_rect is not None and self._province_create_logistics_button_rect.collidepoint(sx, sy)
+
+    def is_province_logistics_hub_checkbox_point(self, sx: int, sy: int) -> bool:
+        """Return True when a click lands on the province logistics hub checkbox."""
+        return self._province_logistics_hub_checkbox_rect is not None and self._province_logistics_hub_checkbox_rect.collidepoint(sx, sy)
 
     def _draw_unit_status_panel(self, unit, panel_x: int, start_y: int, content_w: int, screen_h: int) -> int:
         """Draw a combo box dropdown for unit status selection."""
@@ -778,21 +1125,38 @@ class Graphics:
         half = unit_size // 2
         rect = pygame.Rect(cx - half, cy - half, unit_size, unit_size)
         self._unit_screen_rects[unit.id] = rect
+        self._unit_draw_order.append(unit.id)
 
         color = self._get_unit_color(unit)
-        pygame.draw.rect(self.screen, color, rect)
-        pygame.draw.rect(self.screen, (0, 0, 0), rect, 2)
+        card_fill = self._shade_color(color, 0.90)
+        card_stroke = (30, 30, 30)
+        selected_ids = set(getattr(self.game, "unit_multi_selected", []))
+        if getattr(self.game, "unit_selected", 0) == unit.id:
+            card_stroke = (248, 224, 114)
+        elif unit.id in selected_ids:
+            card_stroke = (198, 214, 246)
+
+        shadow = rect.move(2, 2)
+        pygame.draw.rect(self.screen, (0, 0, 0, 70), shadow, border_radius=4)
+        pygame.draw.rect(self.screen, card_fill, rect, border_radius=4)
+        pygame.draw.rect(self.screen, card_stroke, rect, 2, border_radius=4)
 
         if draw_icon:
             raw_icon = self._get_unit_icon(unit, 128)
             if raw_icon is not None:
-                icon = self._get_scaled_surface_to_fit(raw_icon, unit_size - 6, int(unit_size * 0.55))
+                icon = self._get_scaled_surface_to_fit(raw_icon, unit_size - 10, int(unit_size * 0.44))
                 if icon is not None:
-                    self.screen.blit(icon, icon.get_rect(midtop=(rect.centerx, rect.top + 3)))
+                    self.screen.blit(icon, icon.get_rect(midtop=(rect.centerx, rect.top + 4)))
+
+        flag = self._get_unit_flag(unit, max(12, unit_size // 4), max(8, unit_size // 6))
+        if flag is not None:
+            flag_rect = flag.get_rect()
+            flag_rect.topright = (rect.right - 4, rect.top + 4)
+            self.screen.blit(flag, flag_rect)
 
         if show_stats:
             fh = text_font.get_linesize()
-            max_tw = unit_size - 6
+            max_tw = unit_size - 8
 
             def _fit(txt: str) -> str:
                 if text_font.size(txt)[0] <= max_tw:
@@ -801,38 +1165,59 @@ class Graphics:
                     txt = txt[:-1]
                 return txt + "…" if txt else ""
 
-            bottom = rect.bottom - 1
+            bottom = rect.bottom - 2
             stat_line = _fit(self._get_unit_stat_line(unit))
             if stat_line:
-                s = text_font.render(stat_line, True, (0, 0, 0))
+                s = text_font.render(stat_line, True, (18, 18, 18))
                 self.screen.blit(s, s.get_rect(midbottom=(rect.centerx, bottom)))
                 bottom -= fh
             status_text = _fit(self._get_unit_status_text(unit))
             if status_text:
-                s = text_font.render(status_text, True, (0, 0, 0))
+                s = text_font.render(status_text, True, (18, 18, 18))
                 self.screen.blit(s, s.get_rect(midbottom=(rect.centerx, bottom)))
                 bottom -= fh
             name_text = _fit(str(getattr(unit, "name", "")))
             if name_text:
-                s = text_font.render(name_text, True, (0, 0, 0))
+                s = text_font.render(name_text, True, (18, 18, 18))
                 self.screen.blit(s, s.get_rect(midbottom=(rect.centerx, bottom)))
 
     def draw_units(self) -> None:
-        """Draw all units grouped by province; same nation stacks vertically, different nations side-by-side."""
+        """Draw all visible units as overlapped card stacks per province."""
         unit_size = self._get_unit_draw_size()
         draw_icon = unit_size >= 40
         show_stats = unit_size >= 55
         text_font = pygame.font.Font(None, max(14, unit_size // 5))
-        gap = 3
+        stack_dx = max(3, unit_size // 9)
+        stack_dy = max(4, unit_size // 7)
+
+        def _unit_sort_key(unit) -> tuple[int, int, str]:
+            raw_id = getattr(unit, "id", "")
+            as_text = str(raw_id)
+
+            # Keep numeric IDs ordered numerically when possible.
+            try:
+                return (0, int(raw_id), as_text)
+            except (TypeError, ValueError):
+                pass
+
+            # Fallback for IDs like "unit1": extract digits and sort naturally.
+            digits = "".join(ch for ch in as_text if ch.isdigit())
+            if digits:
+                return (1, int(digits), as_text)
+
+            # Final fallback: lexical order for non-numeric IDs.
+            return (2, 0, as_text)
 
         armies = getattr(self.game, "armies", {})
         if not armies:
             return
 
         self._unit_screen_rects = {}
+        self._unit_draw_order = []
+        self._unit_stack_hitboxes = []
 
-        # Group visible units: province_id -> nation_tag -> [unit]
-        province_groups: Dict[int, Dict[str, list]] = {}
+        # Group visible units by province.
+        province_groups: Dict[int, list] = {}
         for army in armies.values():
             for unit in army.get_all_units():
                 if not self._is_unit_visible_to_player(unit):
@@ -840,43 +1225,133 @@ class Graphics:
                 loc = getattr(unit, "location", None)
                 if loc is None:
                     continue
-                nation = getattr(unit, "nation", "")
                 if loc not in province_groups:
-                    province_groups[loc] = {}
-                if nation not in province_groups[loc]:
-                    province_groups[loc][nation] = []
-                province_groups[loc][nation].append(unit)
+                    province_groups[loc] = []
+                province_groups[loc].append(unit)
 
-        for province_id, nation_dict in province_groups.items():
+        for province_id, units in province_groups.items():
             province = self.game.map.get_province_by_id(province_id)
             if province is None:
                 continue
+
+            units.sort(key=_unit_sort_key)
+            selected_id = getattr(self.game, "unit_selected", 0)
+            if selected_id:
+                units.sort(key=lambda u: getattr(u, "id", None) == selected_id)
+
             center = self._get_province_center(province)
             cx, cy = self.world_to_screen(center[0], center[1])
+            count = len(units)
+            half = unit_size // 2
 
-            nations = list(nation_dict.keys())
-            num_cols = len(nations)
-            total_w = num_cols * unit_size + (num_cols - 1) * gap
-            # x centre of leftmost column
-            col_start_x = cx - total_w // 2 + unit_size // 2
+            base_cx = cx - ((count - 1) * stack_dx) // 2
+            base_cy = cy - ((count - 1) * stack_dy) // 2
 
-            for col_idx, nation_tag in enumerate(nations):
-                col_cx = col_start_x + col_idx * (unit_size + gap)
-                for row_idx, unit in enumerate(nation_dict[nation_tag]):
-                    unit_cy = cy + row_idx * (unit_size + gap)
-                    self._draw_single_unit(unit, col_cx, unit_cy, unit_size, draw_icon, show_stats, text_font)
+            stack_unit_ids: list[int] = []
+
+            for idx, unit in enumerate(units):
+                unit_cx = base_cx + idx * stack_dx
+                unit_cy = base_cy + idx * stack_dy
+                self._draw_single_unit(unit, unit_cx, unit_cy, unit_size, draw_icon, show_stats, text_font)
+                stack_unit_ids.append(unit.id)
+
+            if stack_unit_ids:
+                last_cx = base_cx + (count - 1) * stack_dx
+                last_cy = base_cy + (count - 1) * stack_dy
+                left = min(base_cx, last_cx) - half
+                top = min(base_cy, last_cy) - half
+                right = max(base_cx, last_cx) + half
+                bottom = max(base_cy, last_cy) + half
+                stack_rect = pygame.Rect(left, top, max(1, right - left), max(1, bottom - top))
+                stack_rect.inflate_ip(max(6, unit_size // 6), max(6, unit_size // 6))
+                self._unit_stack_hitboxes.append((stack_rect, stack_unit_ids))
     
     def get_unit_at_point(self, wx: float, wy: float):
         """Get the unit at a given world position using cached screen rects."""
         test_sx, test_sy = self.world_to_screen(wx, wy)
 
+        # Prefer stack-level hitboxes so clicking anywhere on a grouped stack picks its top unit.
+        for stack_rect, stack_unit_ids in reversed(self._unit_stack_hitboxes):
+            if not stack_rect.collidepoint(test_sx, test_sy):
+                continue
+
+            top_to_bottom = list(reversed(stack_unit_ids))
+            return self._find_unit_by_id(top_to_bottom[0])
+
+        hit_unit_ids: list[int] = []
+        for unit_id in self._unit_draw_order:
+            rect = self._unit_screen_rects.get(unit_id)
+            if rect is not None and rect.collidepoint(test_sx, test_sy):
+                hit_unit_ids.append(unit_id)
+
+        if not hit_unit_ids:
+            return None
+
+        # Draw order is bottom -> top, so reverse for click priority.
+        top_to_bottom = list(reversed(hit_unit_ids))
+        return self._find_unit_by_id(top_to_bottom[0])
+
+    def get_next_visible_unit_in_province(self, unit_id):
+        """Return next visible unit in the same province, cycling by stable id order."""
+        current = self._find_unit_by_id(unit_id)
+        if current is None:
+            return None
+
+        province_id = getattr(current, "location", None)
+        if province_id is None:
+            return current
+
+        same_province_units = []
         armies = getattr(self.game, "armies", {})
         for army in armies.values():
             for unit in army.get_all_units():
-                rect = self._unit_screen_rects.get(unit.id)
-                if rect is not None and rect.collidepoint(test_sx, test_sy):
-                    return unit
-        return None
+                if getattr(unit, "location", None) != province_id:
+                    continue
+                if not self._is_unit_visible_to_player(unit):
+                    continue
+                same_province_units.append(unit)
+
+        if len(same_province_units) <= 1:
+            return current
+
+        def _unit_sort_key(unit) -> tuple[int, int, str]:
+            raw_id = getattr(unit, "id", "")
+            as_text = str(raw_id)
+            try:
+                return (0, int(raw_id), as_text)
+            except (TypeError, ValueError):
+                digits = "".join(ch for ch in as_text if ch.isdigit())
+                if digits:
+                    return (1, int(digits), as_text)
+                return (2, 0, as_text)
+
+        same_province_units.sort(key=_unit_sort_key)
+        for idx, unit in enumerate(same_province_units):
+            if getattr(unit, "id", None) == unit_id:
+                return same_province_units[(idx + 1) % len(same_province_units)]
+
+        return same_province_units[0]
+
+    def get_units_in_screen_rect(self, selection_rect: pygame.Rect):
+        """Return visible units whose markers intersect the given screen-space rectangle."""
+        if selection_rect.width <= 0 or selection_rect.height <= 0:
+            return []
+
+        found_units = []
+        found_ids = set()
+        for unit_id in reversed(self._unit_draw_order):
+            unit_rect = self._unit_screen_rects.get(unit_id)
+            if unit_rect is None or not unit_rect.colliderect(selection_rect):
+                continue
+
+            unit = self._find_unit_by_id(unit_id)
+            if unit is None or unit_id in found_ids:
+                continue
+
+            found_units.append(unit)
+            found_ids.add(unit_id)
+
+        return found_units
 
     def _find_unit_by_id(self, unit_id):
         armies = getattr(self.game, "armies", {})
@@ -903,6 +1378,174 @@ class Graphics:
             trimmed = trimmed[:-1]
 
         return f"{trimmed}{ellipsis}"
+
+    def close_people_overlay(self) -> None:
+        self._people_overlay_open = False
+
+    def _get_people_for_selected_province(self, province_id: int):
+        simulation = getattr(self.game, "simulation", None)
+        if simulation is None:
+            return []
+
+        manager = getattr(simulation, "people_manager", None)
+        if manager is None:
+            return []
+
+        province_people = manager.get_people_in_province(province_id)
+        return [p for p in province_people if self._is_player_side_nation(getattr(p, "nation", None))]
+
+    def handle_people_ui_click(self, sx: int, sy: int) -> bool:
+        """Handle people button/overlay clicks. Returns True when click is consumed."""
+        if self._people_overlay_open:
+            if self._people_overlay_quit_rect and self._people_overlay_quit_rect.collidepoint(sx, sy):
+                self._people_overlay_open = False
+            elif self._people_overlay_scrollbar_rect and self._people_overlay_scrollbar_rect.collidepoint(sx, sy):
+                # Click on scrollbar: calculate new scroll position
+                total_items, max_rows = self._people_overlay_scrollbar_range
+                if total_items > max_rows:
+                    scrollbar_rect = self._people_overlay_scrollbar_rect
+                    relative_y = sy - scrollbar_rect.top
+                    scrollbar_fraction = max(0.0, min(1.0, relative_y / scrollbar_rect.height))
+                    max_scroll = total_items - max_rows
+                    self._people_overlay_scroll_offset = int(scrollbar_fraction * max_scroll)
+            return True
+
+        if self._people_button_rect and self._people_button_rect.collidepoint(sx, sy):
+            self._people_overlay_open = True
+            self._people_overlay_scroll_offset = 0
+            return True
+
+        return False
+
+    def scroll_people_overlay(self, delta: int) -> None:
+        """Scroll people list by delta rows (negative = up, positive = down)."""
+        if not self._people_overlay_open:
+            return
+        self._people_overlay_scroll_offset = max(0, self._people_overlay_scroll_offset + delta)
+
+    def _draw_people_overlay(self) -> None:
+        if not self._people_overlay_open:
+            self._people_overlay_rect = None
+            self._people_overlay_quit_rect = None
+            return
+
+        selected_province_id = getattr(self.game, "province_selected", 0)
+        if not selected_province_id:
+            self._people_overlay_open = False
+            self._people_overlay_rect = None
+            self._people_overlay_quit_rect = None
+            return
+
+        screen_w, screen_h = self.screen.get_size()
+        overlay_w = int(screen_w * 0.78)
+        overlay_h = int(screen_h * 0.72)
+        overlay_w = max(540, min(1200, overlay_w))
+        overlay_h = max(360, min(900, overlay_h))
+
+        overlay_x = (screen_w - overlay_w) // 2
+        overlay_y = (screen_h - overlay_h) // 2
+        overlay_rect = pygame.Rect(overlay_x, overlay_y, overlay_w, overlay_h)
+        self._people_overlay_rect = overlay_rect
+
+        dim = pygame.Surface((screen_w, screen_h), pygame.SRCALPHA)
+        dim.fill((0, 0, 0, 130))
+        self.screen.blit(dim, (0, 0))
+
+        if self.people_overlay_bg_image is not None:
+            bg = pygame.transform.smoothscale(self.people_overlay_bg_image, (overlay_w, overlay_h))
+            self.screen.blit(bg, overlay_rect.topleft)
+        else:
+            pygame.draw.rect(self.screen, (35, 40, 48), overlay_rect, border_radius=8)
+            pygame.draw.rect(self.screen, (110, 120, 135), overlay_rect, 2, border_radius=8)
+
+        title_font = pygame.font.Font(None, max(26, self.ui_font.get_linesize() + 10))
+        row_font = pygame.font.Font(None, max(18, self.ui_font.get_linesize() + 2))
+
+        province = self.game.map.get_province_by_id(selected_province_id)
+        province_name = str(province.get("name")) if province else f"Province {selected_province_id}"
+        title = title_font.render(f"People in {province_name}", True, (245, 245, 245))
+        self.screen.blit(title, (overlay_x + 24, overlay_y + 16))
+
+        quit_size = max(30, min(50, overlay_h // 10))
+        quit_x = overlay_x + overlay_w - quit_size - 14
+        quit_y = overlay_y + 14
+        quit_rect = pygame.Rect(quit_x, quit_y, quit_size, quit_size)
+        self._people_overlay_quit_rect = quit_rect
+
+        if self.people_quit_button_image is not None:
+            quit_img = pygame.transform.smoothscale(self.people_quit_button_image, (quit_size, quit_size))
+            self.screen.blit(quit_img, quit_rect.topleft)
+        else:
+            pygame.draw.rect(self.screen, (130, 40, 40), quit_rect, border_radius=4)
+            x_font = pygame.font.Font(None, max(24, quit_size - 6))
+            x_text = x_font.render("X", True, (245, 245, 245))
+            self.screen.blit(x_text, x_text.get_rect(center=quit_rect.center))
+
+        list_x = overlay_x + 24
+        list_y = overlay_y + 66
+        list_w = overlay_w - 48
+        list_h = overlay_h - 90
+        list_rect = pygame.Rect(list_x, list_y, list_w, list_h)
+        pygame.draw.rect(self.screen, (38, 38, 38), list_rect, border_radius=6)
+        pygame.draw.rect(self.screen, (72, 72, 72), list_rect, 1, border_radius=6)
+
+        headers = ["Name", "Age", "Job", "Home"]
+        col_offsets = [16, int(list_w * 0.50), int(list_w * 0.64), int(list_w * 0.80)]
+        header_y = list_y + 10
+        for header, offset in zip(headers, col_offsets):
+            header_surface = row_font.render(header, True, (250, 250, 250))
+            self.screen.blit(header_surface, (list_x + offset, header_y))
+
+        pygame.draw.line(self.screen, (115, 115, 115), (list_x + 10, header_y + 24), (list_x + list_w - 10, header_y + 24), 1)
+
+        people_list = self._get_people_for_selected_province(selected_province_id)
+
+        row_height = max(20, row_font.get_linesize() + 3)
+        max_rows = max(1, (list_h - 42) // row_height)
+        
+        start_idx = min(self._people_overlay_scroll_offset, max(0, len(people_list) - max_rows))
+        visible_people = people_list[start_idx : start_idx + max_rows]
+
+        for idx, person in enumerate(visible_people):
+            row_y = header_y + 30 + (idx * row_height)
+            row_rect = pygame.Rect(list_x + 8, row_y - 1, list_w - 16, row_height)
+            row_color = (58, 58, 58) if (start_idx + idx) % 2 == 0 else (46, 46, 46)
+            pygame.draw.rect(self.screen, row_color, row_rect)
+
+            age = person.get_age() if hasattr(person, "get_age") else max(0, int(getattr(person, "age", 0)))
+            full_name = f"{person.name} {person.familyName}".strip()
+            job_label = person.get_job_label() if hasattr(person, "get_job_label") else str(getattr(person, "job", "None"))
+
+            values = [full_name, str(age), job_label, str(getattr(person, "home", "-"))]
+            widths = [col_offsets[1] - col_offsets[0] - 8, col_offsets[2] - col_offsets[1] - 8, col_offsets[3] - col_offsets[2] - 8, list_w - col_offsets[3] - 20]
+
+            for value, offset, max_w in zip(values, col_offsets, widths):
+                text = self._fit_text(value, max(20, max_w))
+                text_surface = row_font.render(text, True, (245, 245, 245))
+                self.screen.blit(text_surface, (list_x + offset, row_y))
+
+        if not people_list:
+            empty_text = row_font.render("No visible people in this province.", True, (235, 235, 235))
+            self.screen.blit(empty_text, (list_x + 16, header_y + 36))
+
+        if len(people_list) > max_rows:
+            scrollbar_x = list_x + list_w - 12
+            scrollbar_top = header_y + 30
+            scrollbar_h = max_rows * row_height
+            scrollbar_w = 8
+
+            self._people_overlay_scrollbar_rect = pygame.Rect(scrollbar_x, scrollbar_top, scrollbar_w, scrollbar_h)
+            pygame.draw.rect(self.screen, (50, 50, 50), self._people_overlay_scrollbar_rect)
+
+            thumb_h = max(10, int((max_rows / len(people_list)) * scrollbar_h))
+            thumb_pos = int((start_idx / max(1, len(people_list) - max_rows)) * (scrollbar_h - thumb_h))
+            self._people_overlay_scrollbar_thumb_rect = pygame.Rect(scrollbar_x, scrollbar_top + thumb_pos, scrollbar_w, thumb_h)
+            pygame.draw.rect(self.screen, (110, 110, 110), self._people_overlay_scrollbar_thumb_rect)
+            self._people_overlay_scrollbar_range = (len(people_list), max_rows)
+        else:
+            self._people_overlay_scrollbar_rect = None
+            self._people_overlay_scrollbar_thumb_rect = None
+            self._people_overlay_scrollbar_range = (0, 0)
 
     def _get_unit_portrait(self, unit, size: int = 85) -> Optional[pygame.Surface]:
         unit_type = str(getattr(unit, "name", "")).strip().lower()
@@ -966,11 +1609,52 @@ class Graphics:
         blit_fitted_text(speed_text, top_y + line_h * 2)
 
         selected_id = getattr(self.game, "unit_selected", 0)
+        selected_train_id = getattr(self.game, "train_selected", None)
         selected_province_id = getattr(self.game, "province_selected", 0)
         panel_x = content_x
         panel_y = top_y + line_h * 3 + 12
         preview_size = max(90, min(160, content_w))
         line_h = self.ui_font.get_linesize()
+
+        if selected_train_id is not None:
+            train = getattr(self.game, "trains", {}).get(str(selected_train_id))
+            if train is not None:
+                preview_rect = pygame.Rect(panel_x, panel_y, preview_size, preview_size)
+                fill = self._shade_color(self._get_train_color(train), 0.8)
+                pygame.draw.rect(self.screen, fill, preview_rect, border_radius=8)
+                pygame.draw.rect(self.screen, (30, 30, 30), preview_rect, 2, border_radius=8)
+
+                title_font = pygame.font.Font(None, max(28, preview_size // 3))
+                self.screen.blit(title_font.render("TRAIN", True, (20, 20, 20)), (panel_x + 8, panel_y + 8))
+
+                train_status = self._get_train_status_label(getattr(train, "status", 0))
+                route = list(getattr(train, "route", []))
+                loaded_units = list(getattr(train, "loaded_units", []))
+
+                data_y = panel_y + preview_size + 6
+                blit_fitted_text(f"Train: {getattr(train, 'id', '?')}", data_y)
+                blit_fitted_text(f"Nation: {getattr(train, 'nation', '-')}", data_y + line_h)
+                blit_fitted_text(f"Prov: {getattr(train, 'location', '-')}", data_y + (line_h * 2))
+                blit_fitted_text(f"Status: {train_status}", data_y + (line_h * 3))
+                blit_fitted_text(f"Health: {getattr(train, 'health', 0)}", data_y + (line_h * 4))
+                blit_fitted_text(f"Speed: {getattr(train, 'speed', 0)}", data_y + (line_h * 5))
+                blit_fitted_text(f"Suply: {getattr(train, 'suply', 0)}", data_y + (line_h * 6))
+                blit_fitted_text(f"Ammo: {getattr(train, 'ammo', 0)}", data_y + (line_h * 7))
+                blit_fitted_text(f"Lvl: {getattr(train, 'lvl', 1)}", data_y + (line_h * 8))
+                blit_fitted_text(f"Loaded Units: {len(loaded_units)}", data_y + (line_h * 9))
+                next_stop = route[0] if route else "-"
+                blit_fitted_text(f"Next Stop: {next_stop}", data_y + (line_h * 10))
+
+                if self.can_edit_train_status(train):
+                    self._draw_train_status_panel(train, panel_x, data_y + (line_h * 11) + 8, content_w)
+                else:
+                    self._unit_status_dropdown_rects = []
+                    self._unit_status_combobox_rect = None
+                    self._unit_status_dropdown_open = False
+                self._unit_target_size_input_rect = None
+                self._unit_target_size_input_active = False
+                self._people_button_rect = None
+                return
 
         unit = self._find_unit_by_id(selected_id) if selected_id else None
         if unit is not None:
@@ -982,23 +1666,26 @@ class Graphics:
 
             data_y = panel_y + preview_size + 6
             blit_fitted_text(f"Unit: {unit.id}", data_y)
-            blit_fitted_text(f"Nation: {unit.nation}", data_y + line_h)
-            blit_fitted_text(f"Prov: {unit.location}", data_y + (line_h * 2))
-            blit_fitted_text(f"Home: {getattr(unit, 'home', '-')}", data_y + (line_h * 3))
-            blit_fitted_text(f"Soldiers: {getattr(unit, 'soldiers', 0)}", data_y + (line_h * 4))
-            blit_fitted_text(f"Target Size: {getattr(unit, 'targetsize', getattr(unit, 'soldiers', 0))}", data_y + (line_h * 5))
-            blit_fitted_text(f"Status: {self._get_status_label(getattr(unit, 'status', 1))}", data_y + (line_h * 6))
-            blit_fitted_text(f"Morale: {getattr(unit, 'morale', 100)}", data_y + (line_h * 7))
-            blit_fitted_text(f"Org: {getattr(unit, 'organization', 100)}", data_y + (line_h * 8))
-            blit_fitted_text(f"Supply: {getattr(unit, 'suply', 0)}", data_y + (line_h * 9))
-            blit_fitted_text(f"Ammo: {getattr(unit, 'ammo', 0)}", data_y + (line_h * 10))
-            blit_fitted_text(f"Fuel: {getattr(unit, 'fuel', 0)}", data_y + (line_h * 11))
-            blit_fitted_text(f"Sup Rate: {getattr(unit, 'suply_consumption', 0)}", data_y + (line_h * 12))
-            blit_fitted_text(f"Ammo Rate: {getattr(unit, 'ammo_consumption', 0)}", data_y + (line_h * 13))
-            blit_fitted_text(f"Fuel Rate: {getattr(unit, 'suply_fuel_consumption', 0)}", data_y + (line_h * 14))
-            blit_fitted_text(f"Logistic value: {getattr(unit, 'logistic_value', 0)}", data_y + (line_h * 15))
+            blit_fitted_text(f"Leader ID: {getattr(unit, 'leader_id', 0)}", data_y + line_h)
+            blit_fitted_text(f"Nation: {unit.nation}", data_y + (line_h * 2))
+            blit_fitted_text(f"Prov: {unit.location}", data_y + (line_h * 3))
+            blit_fitted_text(f"Home: {getattr(unit, 'home', '-')}", data_y + (line_h * 4))
+            blit_fitted_text(f"Soldiers: {getattr(unit, 'soldiers', 0)}", data_y + (line_h * 5))
+            blit_fitted_text(f"Target Size: {getattr(unit, 'targetsize', getattr(unit, 'soldiers', 0))}", data_y + (line_h * 6))
+            blit_fitted_text(f"Status: {self._get_status_label(getattr(unit, 'status', 1))}", data_y + (line_h * 7))
+            blit_fitted_text(f"Morale: {getattr(unit, 'morale', 100)}", data_y + (line_h * 8))
+            blit_fitted_text(f"Org: {getattr(unit, 'organization', 100)}", data_y + (line_h * 9))
+            blit_fitted_text(f"Supply: {getattr(unit, 'suply', 0)}", data_y + (line_h * 10))
+            blit_fitted_text(f"Ammo: {getattr(unit, 'ammo', 0)}", data_y + (line_h * 11))
+            blit_fitted_text(f"Fuel: {getattr(unit, 'fuel', 0)}", data_y + (line_h * 12))
+            blit_fitted_text(f"Sup Rate: {getattr(unit, 'suply_consumption', 0)}", data_y + (line_h * 13))
+            blit_fitted_text(f"Ammo Rate: {getattr(unit, 'ammo_consumption', 0)}", data_y + (line_h * 14))
+            blit_fitted_text(f"Fuel Rate: {getattr(unit, 'suply_fuel_consumption', 0)}", data_y + (line_h * 15))
+            blit_fitted_text(f"Vehicles: {getattr(unit, 'transport_V', 0)}", data_y + (line_h * 16))
+            blit_fitted_text(f"Horse Wagons: {getattr(unit, 'transport_H', 0)}", data_y + (line_h * 17))
+            blit_fitted_text(f"Logistic value: {getattr(unit, 'logistics_value', 0)}", data_y + (line_h * 18))
             if self.can_edit_unit_status(unit):
-                next_y = self._draw_unit_target_size_panel(unit, panel_x, data_y + (line_h * 16) + 6, content_w)
+                next_y = self._draw_unit_target_size_panel(unit, panel_x, data_y + (line_h * 19) + 6, content_w)
                 self._draw_unit_status_panel(unit, panel_x, next_y + 8, content_w, self.screen.get_height())
             else:
                 self._unit_status_dropdown_rects = []
@@ -1013,12 +1700,22 @@ class Graphics:
         self._unit_status_dropdown_open = False
         self._unit_target_size_input_rect = None
         self._unit_target_size_input_active = False
+        self._province_create_unit_button_rect = None
+        self._province_create_logistics_button_rect = None
+        self._province_logistics_hub_checkbox_rect = None
 
         if not selected_province_id:
+            self._people_button_rect = None
+            self._province_create_unit_button_rect = None
+            self._province_create_logistics_button_rect = None
+            self._province_logistics_hub_checkbox_rect = None
             return
 
         province = self.game.map.get_province_by_id(selected_province_id)
         if province is None:
+            self._province_create_unit_button_rect = None
+            self._province_create_logistics_button_rect = None
+            self._province_logistics_hub_checkbox_rect = None
             return
 
         preview_rect = pygame.Rect(panel_x, panel_y, preview_size, preview_size)
@@ -1043,22 +1740,93 @@ class Graphics:
         blit_fitted_text(f"Nearby: {len(province.get('nearby_provinces', []))}", data_y + (line_h * 3))
 
         if province_obj is None:
+            self._province_create_unit_button_rect = None
+            self._province_create_logistics_button_rect = None
+            self._province_logistics_hub_checkbox_rect = None
             return
 
         blit_fitted_text(f"Pop: {province_obj.population}", data_y + (line_h * 4))
         blit_fitted_text(f"Current Recruits: {province_obj.province_recruits}", data_y + (line_h * 5))
         blit_fitted_text(f"Max Recruits: {province_obj.province_recrutable}", data_y + (line_h * 6))
-        blit_fitted_text(f"Soldiers: {province_obj.province_soldiers}", data_y + (line_h * 7))
-        blit_fitted_text(f"Buildings: {len(province_obj.buildings)}", data_y + (line_h * 8))
+
+        blit_fitted_text(f"Soldiers: {province_obj.province_soldiers}", data_y + (line_h * 10))
+        blit_fitted_text(f"Buildings: {len(province_obj.buildings)}", data_y + (line_h * 11))
         blit_fitted_text(
             f"U Here/Home: {len(province_obj.units_in_here)}/{len(province_obj.units_from_here)}",
-            data_y + (line_h * 9),
+            data_y + (line_h * 12),
         )
         blit_fitted_text(
             f"Sup/Food/Fuel: {province_obj.suply}/{province_obj.food}/{province_obj.fuel}",
-            data_y + (line_h * 10),
+            data_y + (line_h * 13),
         )
-        blit_fitted_text(f"Ammo: {province_obj.ammo}", data_y + (line_h * 11))
+        blit_fitted_text(f"Ammo: {province_obj.ammo}", data_y + (line_h * 14))
+
+        can_toggle_hub = self.can_toggle_logistic_hub_in_selected_province(province, province_obj)
+        hub_checked = bool(getattr(province_obj, "logistic_hub", False))
+        checkbox_size = max(14, min(20, line_h + 2))
+        checkbox_y = data_y + (line_h * 15) + 2
+
+        if can_toggle_hub:
+            self._province_logistics_hub_checkbox_rect = pygame.Rect(panel_x, checkbox_y, checkbox_size, checkbox_size)
+
+            checkbox_fill = (70, 115, 70) if hub_checked else (58, 58, 58)
+            checkbox_border = (145, 175, 145)
+            pygame.draw.rect(self.screen, checkbox_fill, self._province_logistics_hub_checkbox_rect, border_radius=3)
+            pygame.draw.rect(self.screen, checkbox_border, self._province_logistics_hub_checkbox_rect, 1, border_radius=3)
+
+            if hub_checked:
+                x0 = self._province_logistics_hub_checkbox_rect.left + 3
+                y0 = self._province_logistics_hub_checkbox_rect.centery
+                x1 = self._province_logistics_hub_checkbox_rect.left + 7
+                y1 = self._province_logistics_hub_checkbox_rect.bottom - 4
+                x2 = self._province_logistics_hub_checkbox_rect.right - 3
+                y2 = self._province_logistics_hub_checkbox_rect.top + 4
+                pygame.draw.lines(self.screen, (230, 245, 230), False, [(x0, y0), (x1, y1), (x2, y2)], 2)
+
+            hub_label_surface = self.ui_font.render("Logistics Hub", True, (240, 240, 240))
+            self.screen.blit(
+                hub_label_surface,
+                (self._province_logistics_hub_checkbox_rect.right + 6, checkbox_y + max(0, (checkbox_size - hub_label_surface.get_height()) // 2)),
+            )
+            btn_y = checkbox_y + checkbox_size + 10
+        else:
+            self._province_logistics_hub_checkbox_rect = None
+            btn_y = data_y + (line_h * 15) + 10
+
+        btn_w = max(80, min(130, content_w))
+        btn_h = max(24, min(36, line_h * 2))
+        btn_x = panel_x
+
+        can_create = self.can_create_unit_in_selected_province(province, province_obj)
+
+        self._province_create_unit_button_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+        unit_fill = (70, 110, 75) if can_create else (80, 80, 80)
+        unit_border = (145, 170, 145) if can_create else (120, 120, 120)
+        pygame.draw.rect(self.screen, unit_fill, self._province_create_unit_button_rect, border_radius=4)
+        pygame.draw.rect(self.screen, unit_border, self._province_create_unit_button_rect, 1, border_radius=4)
+        create_label = self.ui_font.render("Create Unit", True, (245, 245, 245))
+        self.screen.blit(create_label, create_label.get_rect(center=self._province_create_unit_button_rect.center))
+        btn_y += btn_h + 6
+
+        self._province_create_logistics_button_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+        logi_fill = (110, 95, 60) if can_create else (80, 80, 80)
+        logi_border = (175, 160, 125) if can_create else (120, 120, 120)
+        pygame.draw.rect(self.screen, logi_fill, self._province_create_logistics_button_rect, border_radius=4)
+        pygame.draw.rect(self.screen, logi_border, self._province_create_logistics_button_rect, 1, border_radius=4)
+        logi_label = self.ui_font.render("Create Logi", True, (245, 245, 245))
+        self.screen.blit(logi_label, logi_label.get_rect(center=self._province_create_logistics_button_rect.center))
+        btn_y += btn_h + 6
+
+        self._people_button_rect = pygame.Rect(btn_x, btn_y, btn_w, btn_h)
+
+        if self.people_button_image is not None:
+            btn_img = pygame.transform.smoothscale(self.people_button_image, (btn_w, btn_h))
+            self.screen.blit(btn_img, (btn_x, btn_y))
+        else:
+            pygame.draw.rect(self.screen, (70, 95, 125), self._people_button_rect, border_radius=4)
+            pygame.draw.rect(self.screen, (130, 145, 165), self._people_button_rect, 1, border_radius=4)
+            label = self.ui_font.render("People", True, (245, 245, 245))
+            self.screen.blit(label, label.get_rect(center=self._people_button_rect.center))
 
     def draw(self, debug_draw_connections: bool = True):
         # Clear the screen with a background color (e.g., white)
@@ -1087,11 +1855,34 @@ class Graphics:
         if debug_draw_connections:
             self.draw_nearby_connections()
 
+        # Draw rails above debug nearby lines so they remain visible.
+        self.draw_rails()
+
+        # Draw trains as separate markers.
+        self.draw_trains()
+
         # Draw units on top of everything
         self.draw_units()
 
         # Draw UI on top of all world elements
         self._draw_ui_overlay()
+        self._draw_people_overlay()
+
+        if getattr(self.game, "_drag_select_active", False):
+            start = getattr(self.game, "_drag_select_start", None)
+            current = getattr(self.game, "_drag_select_current", None)
+            moved = getattr(self.game, "_drag_select_moved", False)
+            if start is not None and current is not None and moved:
+                left = min(start[0], current[0])
+                top = min(start[1], current[1])
+                width = abs(current[0] - start[0])
+                height = abs(current[1] - start[1])
+                rect = pygame.Rect(left, top, width, height)
+                if rect.width > 0 and rect.height > 0:
+                    fill = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+                    fill.fill((120, 175, 255, 45))
+                    self.screen.blit(fill, rect.topleft)
+                    pygame.draw.rect(self.screen, (120, 175, 255), rect, 1)
 
         # Update the display
         pygame.display.flip()

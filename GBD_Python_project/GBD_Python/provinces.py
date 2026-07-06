@@ -41,13 +41,13 @@ class building:
 
         if self.building_type == 3:
             # civil industry produces province supply that is stored in this building
-            produced_suply = int(40000 * production_factor)
+            produced_suply = int(8000 * production_factor)
         elif self.building_type == 4:
             # farm produces food directly
             produced_food = int(50 * production_factor)
         elif self.building_type == 7:
             # military industry produces ammo that is stored in this building
-            self.ammo_storage += int(1000 * production_factor)
+            self.ammo_storage += int(15000 * production_factor)
         elif self.building_type == 8:
             # fuel industry produces fuel directly
             produced_fuel = int(500 * production_factor)
@@ -178,6 +178,8 @@ class Province:
         
         #number of deaths by war. this will be used to calculate the population loyalty. and statistics.
         self.province_deaths = []
+
+        self.logistic_hub = False
 
     def sim_update(self):
         #this is where we will update the province day tick, it will calculate the the new suply, the new fuel and food, and so on. 
@@ -342,4 +344,18 @@ class Province:
     
     def return_suply(self):
         return self.suply
+    
+    def add_suply(self,suply_amount):
         
+        self.suply += suply_amount
+
+    def set_logistic_hub(self, enabled=True):
+        self.logistic_hub = bool(enabled)
+
+    def clear_logistic_hub(self):
+        self.logistic_hub = False
+
+    def is_logistic_hub(self):
+        return self.logistic_hub
+
+    

@@ -1,5 +1,6 @@
 import json
 import csv
+from collections import deque
 from shapely.geometry import Point, Polygon
 from provinces import Province
 
@@ -11,6 +12,7 @@ class Map():
         self.provinceObjects = []
         self._province_index = {}
         self._province_objects_index = {}
+        self.rails = Rails()
 
     def load_provinces(self, geojson_file, nearby_csv_file=None, centers_csv_file=None):
         with open(geojson_file, encoding="utf-8") as f:
@@ -279,3 +281,200 @@ class Map():
     def ensure_armybases_for_units(self, armies):
         """Compatibility wrapper. Prefer initialize_startup_unit_province_data during load."""
         return self.initialize_startup_unit_province_data(armies)
+
+    def load_rails(self, csv_file):
+        """Load rail network and project rail presence into Province objects."""
+        self.rails.load_rails(csv_file)
+
+        # Reset rail flags before applying loaded data.
+        for prov_obj in self.provinceObjects:
+            prov_obj.hasRailroad = False
+            prov_obj.railid = []
+
+        for rail in self.rails.get_all_rails():
+            rail_id = rail["id"]
+            for province_id in rail.get("points", []):
+                prov_obj = self.get_province_object_by_id(province_id)
+                if not prov_obj:
+                    continue
+                prov_obj.hasRailroad = True
+                if rail_id not in prov_obj.railid:
+                    prov_obj.railid.append(rail_id)
+
+    def get_all_rails(self):
+        return self.rails.get_all_rails()
+
+    def get_rail_by_id(self, rail_id):
+        return self.rails.get_rail_by_id(rail_id)
+
+    def get_rails_in_province(self, province_id):
+        return self.rails.get_rails_in_province(province_id)
+
+    def get_rail_point_health(self, rail_id):
+        return self.rails.get_rail_point_health(rail_id)
+
+    def get_rail_neighbors(self, province_id):
+        """Return adjacent provinces reachable by rail from a province."""
+        neighbors = set()
+        for rail in self.get_rails_in_province(province_id):
+            points = rail.get("points", [])
+            for idx, pid in enumerate(points):
+                if pid != province_id:
+                    continue
+                if idx > 0:
+                    neighbors.add(points[idx - 1])
+                if idx + 1 < len(points):
+                    neighbors.add(points[idx + 1])
+        return list(neighbors)
+
+    def find_rail_path(self, start_province_id, destination_province_id):
+        """Find shortest rail-only path between provinces using BFS."""
+        if start_province_id == destination_province_id:
+            return [start_province_id]
+
+        visited = {start_province_id}
+        parent = {}
+        queue = deque([start_province_id])
+
+        while queue:
+            current = queue.popleft()
+            for neighbor in self.get_rail_neighbors(current):
+                if neighbor in visited:
+                    continue
+                visited.add(neighbor)
+                parent[neighbor] = current
+                if neighbor == destination_province_id:
+                    path = [destination_province_id]
+                    while path[-1] != start_province_id:
+                        path.append(parent[path[-1]])
+                    path.reverse()
+                    return path
+                queue.append(neighbor)
+
+        return []
+    
+
+class Rails: 
+    def __init__(self):
+        self.rails = []
+        self._rail_index = {}
+        self._province_rail_index = {}
+
+    @staticmethod
+    def _to_int(value):
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        try:
+            return int(s)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_csv_int_list(value):
+        if value is None:
+            return []
+
+        out = []
+        for raw in str(value).split(","):
+            item = raw.strip()
+            if not item:
+                continue
+            try:
+                out.append(int(item))
+            except ValueError:
+                continue
+        return out
+
+    def load_rails(self, csv_file):
+        """Load rail data from starting_rails-style CSV.
+
+        Expected columns:
+        - Rail_ID
+        - Rail Junctions
+        - P1..Pn (province path points)
+        """
+        self.rails = []
+        self._rail_index = {}
+        self._province_rail_index = {}
+
+        with open(csv_file, encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                normalized_row = {str(k).strip(): v for k, v in row.items()}
+
+                # Support both new and legacy naming schemes.
+                rail_id = self._to_int(
+                    normalized_row.get("Rail_ID")
+                    or normalized_row.get("rail_id")
+                    or normalized_row.get("id")
+                )
+                if rail_id is None:
+                    continue
+
+                junctions = self._parse_csv_int_list(
+                    normalized_row.get("Rail Junctions")
+                    or normalized_row.get("Rail Junctions ")
+                    or normalized_row.get("rail_junctions")
+                    or normalized_row.get("junctions")
+                )
+
+                point_columns = []
+                for col_name in normalized_row.keys():
+                    compact = col_name.strip().lower().replace(" ", "")
+                    if not compact.startswith("p"):
+                        continue
+                    suffix = compact[1:]
+                    if suffix.isdigit():
+                        point_columns.append((int(suffix), col_name))
+
+                point_columns.sort(key=lambda item: item[0])
+                points = []
+                for _, col_name in point_columns:
+                    province_id = self._to_int(normalized_row.get(col_name))
+                    if province_id is not None:
+                        points.append(province_id)
+
+                # Legacy fallback: one province per row.
+                if not points:
+                    single_province = self._to_int(normalized_row.get("province_id"))
+                    if single_province is not None:
+                        points = [single_province]
+
+                if not points:
+                    continue
+
+                rail = {
+                    "id": rail_id,
+                    "junctions": junctions,
+                    "points": points,
+                    # Track health per path point (same index as points list).
+                    "point_health": [100 for _ in points],
+                }
+
+                self.rails.append(rail)
+                self._rail_index[rail_id] = rail
+
+                for province_id in points:
+                    self._province_rail_index.setdefault(province_id, []).append(rail_id)
+
+    def get_all_rails(self):
+        return list(self.rails)
+
+    def get_rail_by_id(self, rail_id):
+        """Return the rail dict with the given id, or None if not found."""
+        return self._rail_index.get(rail_id)
+
+    def get_rails_in_province(self, province_id):
+        """Return a list of rails in the given province."""
+        rail_ids = self._province_rail_index.get(province_id, [])
+        return [self._rail_index[rail_id] for rail_id in rail_ids if rail_id in self._rail_index]
+
+    def get_rail_point_health(self, rail_id):
+        """Return health values for each rail point in a line."""
+        rail = self.get_rail_by_id(rail_id)
+        if not rail:
+            return []
+        return list(rail.get("point_health", []))

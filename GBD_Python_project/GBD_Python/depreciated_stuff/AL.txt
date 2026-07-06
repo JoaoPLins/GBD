@@ -1,0 +1,300 @@
+
+	def Autonumous_logi(self):
+		"""Autonomous logistics: local/adjacent delivery, hub stockpiles, and train support."""
+		def _estimate_path(start_province_id, destination_province_id):
+			"""Read-only shortest path estimate using province adjacency (no movement queue side effects)."""
+			if start_province_id == destination_province_id:
+				return [start_province_id]
+
+			start_province = self.game_map.get_province_by_id(start_province_id)
+			destination_province = self.game_map.get_province_by_id(destination_province_id)
+			if start_province is None or destination_province is None:
+				return []
+
+			open_heap = []
+			heapq.heappush(open_heap, (0, start_province_id))
+			came_from = {}
+			g_cost = {start_province_id: 0}
+
+			while open_heap:
+				_, current = heapq.heappop(open_heap)
+				if current == destination_province_id:
+					break
+
+				province = self.game_map.get_province_by_id(current)
+				if province is None:
+					continue
+
+				for neighbor in province.get("nearby_provinces", []):
+					neighbor_province = self.game_map.get_province_by_id(neighbor)
+					if neighbor_province is None or self._is_water_province(neighbor_province):
+						continue
+
+					tentative_cost = g_cost[current] + 1
+					if tentative_cost < g_cost.get(neighbor, float("inf")):
+						came_from[neighbor] = current
+						g_cost[neighbor] = tentative_cost
+						heapq.heappush(open_heap, (tentative_cost, neighbor))
+
+			if destination_province_id not in g_cost:
+				return []
+
+			path = [destination_province_id]
+			while path[-1] != start_province_id:
+				path.append(came_from[path[-1]])
+			path.reverse()
+			return path
+
+		def _same_nation(unit_a, unit_b):
+			return getattr(unit_a, "nation", None) == getattr(unit_b, "nation", None)
+
+		def _is_neighbor(province_a, province_b):
+			if province_a == province_b:
+				return True
+			province = self.game_map.get_province_by_id(province_a)
+			if not province:
+				return False
+			return province_b in province.get("nearby_provinces", [])
+
+		def _is_unit_needy(unit):
+			if unit is None:
+				return False
+			unit.calculate_logistic_consumption()
+			unit.calculate_logistic_request()
+			return getattr(unit, "suply_request", 0) > 0
+
+		def _is_logistics_carrier(unit):
+			if unit is None:
+				return False
+			# Only dedicated logistics units should move under autonomous logistics.
+			return bool(getattr(unit, "type", None) == 4 and unit.has_logistics_capacity() and getattr(unit, "soldiers", 0) > 0)
+
+		def _carrier_is_free(carrier):
+			if getattr(carrier, "status", 1) in (3, 4):
+				return False
+			return self._find_movement_index(carrier.id) is None
+
+		def _province_has_rail(province_id):
+			prov_obj = self.game_map.get_province_object_by_id(province_id)
+			return bool(prov_obj is not None and getattr(prov_obj, "hasRailroad", False))
+
+		def _select_hub_for_unit(unit):
+			"""Prefer rail province in/adjacent to unit province to build local stockpile hubs."""
+			unit_prov = getattr(unit, "location", None)
+			if unit_prov is None:
+				return None
+			if _province_has_rail(unit_prov):
+				return unit_prov
+
+			province = self.game_map.get_province_by_id(unit_prov)
+			if not province:
+				return None
+
+			best_neighbor = None
+			best_supply = -1
+			for nearby_id in province.get("nearby_provinces", []):
+				if not _province_has_rail(nearby_id):
+					continue
+				nearby_obj = self.game_map.get_province_object_by_id(nearby_id)
+				supply_here = nearby_obj.return_suply() if nearby_obj is not None else 0
+				if supply_here > best_supply:
+					best_supply = supply_here
+					best_neighbor = nearby_id
+			return best_neighbor
+
+		all_units = []
+		for army in self.armies.values():
+			all_units.extend(list(army.units.values()))
+
+		if not all_units:
+			return
+
+		# 1) Local + neighboring handoff from logistics carriers to needy units.
+		for carrier in all_units:
+			if not _is_logistics_carrier(carrier):
+				continue
+			if getattr(carrier, "suply", 0) <= 0:
+				continue
+
+			for target in all_units:
+				if target.id == carrier.id:
+					continue
+				if not _same_nation(carrier, target):
+					continue
+				if not _is_neighbor(getattr(carrier, "location", None), getattr(target, "location", None)):
+					continue
+				if not _is_unit_needy(target):
+					continue
+
+				request = int(getattr(target, "suply_request", 0) or 0)
+				if request <= 0:
+					continue
+
+				max_delivery = int(carrier.calculate_logistic_request_nextProvince() or 0)
+				if max_delivery <= 0:
+					max_delivery = int((getattr(carrier, "transport_V", 0) * 100) + (getattr(carrier, "transport_H", 0) * 20))
+
+				# Neighboring delivery has lower throughput than same-province handoff.
+				if getattr(carrier, "location", None) != getattr(target, "location", None):
+					max_delivery = max(0, max_delivery // 2)
+
+				deliverable = min(max_delivery, int(getattr(carrier, "suply", 0) or 0), request)
+				if deliverable <= 0:
+					continue
+
+				carrier.suply -= deliverable
+				target.add_suply(deliverable)
+				print(
+					f"Logi {carrier.id} delivered {deliverable} supply to {target.id} "
+					f"(carrier prov {carrier.location}, target prov {target.location})."
+				)
+
+		# 2) Build updated demand list and hub demand aggregation.
+		needy_units = []
+		for unit in all_units:
+			if _is_unit_needy(unit):
+				needy_units.append(unit)
+
+		if not needy_units:
+			return
+
+		needy_units.sort(key=lambda u: int(getattr(u, "suply_request", 0) or 0), reverse=True)
+
+		hub_demand = {}
+		for unit in needy_units:
+			hub_id = _select_hub_for_unit(unit)
+			if hub_id is None:
+				continue
+			key = (getattr(unit, "nation", None), hub_id)
+			hub_demand[key] = hub_demand.get(key, 0) + int(getattr(unit, "suply_request", 0) or 0)
+
+		# 3) Route free logistics carriers toward demand (prefer hubs, fallback direct target).
+		for carrier in all_units:
+			if not _is_logistics_carrier(carrier):
+				continue
+			if not _carrier_is_free(carrier):
+				continue
+
+			carrier_nation = getattr(carrier, "nation", None)
+			best_target_prov = None
+			best_score = None
+
+			# First try rail hub demand for this nation.
+			for (nation, hub_id), demand in hub_demand.items():
+				if nation != carrier_nation or demand <= 0:
+					continue
+				path = _estimate_path(getattr(carrier, "location", None), hub_id)
+				if not path or len(path) < 2:
+					continue
+				# Higher demand and shorter path are preferred.
+				score = (demand, -len(path))
+				if best_score is None or score > best_score:
+					best_score = score
+					best_target_prov = hub_id
+
+			# Fallback: direct move to highest-priority needy unit.
+			if best_target_prov is None:
+				for target in needy_units:
+					if not _same_nation(carrier, target):
+						continue
+					if getattr(target, "location", None) == getattr(carrier, "location", None):
+						continue
+					path = _estimate_path(getattr(carrier, "location", None), getattr(target, "location", None))
+					if not path or len(path) < 2:
+						continue
+					best_target_prov = getattr(target, "location", None)
+					break
+
+			if best_target_prov is not None:
+				self.pathing(carrier.id, best_target_prov)
+				print(f"Logi {carrier.id} routed to province {best_target_prov} for supply support.")
+
+		# 4) Train support: move supply from rich rail sources to high-demand rail hubs.
+		if not self.trains:
+			return
+
+		def _source_rail_province_for_nation(nation_tag, avoid_province_id=None):
+			best_id = None
+			best_supply = 0
+			for prov in self.game_map.get_all_provinces():
+				pid = prov.get("id")
+				if pid == avoid_province_id:
+					continue
+				if not _province_has_rail(pid):
+					continue
+				if prov.get("owner") != nation_tag and prov.get("controler") != nation_tag:
+					continue
+				prov_obj = self.game_map.get_province_object_by_id(pid)
+				if prov_obj is None:
+					continue
+				sup = int(prov_obj.return_suply() or 0)
+				if sup > best_supply:
+					best_supply = sup
+					best_id = pid
+			return best_id, best_supply
+
+		for train in self.trains.values():
+			train_nation = getattr(train, "nation", None)
+			if not train_nation:
+				continue
+
+			# Skip trains unavailable for logistics duty.
+			if getattr(train, "status", 0) in (5, 6, 7):
+				continue
+
+			# Pick most demanded rail hub for this train's nation.
+			nation_hubs = [
+				(hub_id, demand)
+				for (nation, hub_id), demand in hub_demand.items()
+				if nation == train_nation and demand > 0 and _province_has_rail(hub_id)
+			]
+			if not nation_hubs:
+				continue
+
+			nation_hubs.sort(key=lambda x: x[1], reverse=True)
+			hub_id, _hub_need = nation_hubs[0]
+
+			source_id, source_supply = _source_rail_province_for_nation(train_nation, avoid_province_id=hub_id)
+			if source_id is None:
+				continue
+
+			train_location = getattr(train, "location", None)
+			train_supply = int(getattr(train, "suply", 0) or 0)
+
+			# Continue existing rail move if already en route.
+			if getattr(train, "status", 0) == 1:
+				continue
+
+			# At hub with cargo -> unload.
+			if train_location == hub_id and train_supply > 0:
+				if getattr(train, "status", 0) != 4:
+					train.update_status(4)
+				continue
+
+			# At source and empty/low -> load.
+			if train_location == source_id and source_supply > 0 and train_supply < max(1000, int(getattr(train, "suplyCapacity", 4000) // 3)):
+				if getattr(train, "status", 0) != 3:
+					train.update_status(3)
+				continue
+
+			# Carrying supply: go to hub.
+			if train_supply > 0 and train_location != hub_id:
+				if self._find_train_movement_index(train.id) is None:
+					path = self.train_pathing(train.id, hub_id)
+					if path:
+						print(f"Train {train.id} routed source->hub to province {hub_id}.")
+				continue
+
+			# Empty train: go to source.
+			if train_supply <= 0 and train_location != source_id:
+				if self._find_train_movement_index(train.id) is None:
+					path = self.train_pathing(train.id, source_id)
+					if path:
+						print(f"Train {train.id} routed to source province {source_id} for loading.")
+		
+
+
+    
+
+
+

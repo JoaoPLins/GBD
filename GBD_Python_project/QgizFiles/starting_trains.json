@@ -1,0 +1,60 @@
+{
+	"starting_trains": {
+		"1": {
+			"health": 100,
+			"speed": 45,
+			"lvl": 1,
+			"location": 1,
+			"nation": "URU"
+		},
+		"2": {
+			"health": 100,
+			"speed": 42,
+			"lvl": 1,
+			"location": 1,
+			"nation": "URU"
+		},
+		"3": {
+			"health": 100,
+			"speed": 40,
+			"lvl": 1,
+			"location": 16,
+			"nation": "BRA"
+		},
+		"4": {
+			"health": 95,
+			"speed": 38,
+			"lvl": 1,
+			"location": 52,
+			"nation": "BRA"
+		},
+		"5": {
+			"health": 85,
+			"speed": 36,
+			"lvl": 1,
+			"location": 39,
+			"nation": "ARG"
+		},
+		"6": {
+			"health": 90,
+			"speed": 41,
+			"lvl": 1,
+			"location": 29,
+			"nation": "ARG"
+		},
+		"7": {
+			"health": 80,
+			"speed": 34,
+			"lvl": 1,
+			"location": 79,
+			"nation": "COR"
+		},
+		"8": {
+			"health": 93,
+			"speed": 39,
+			"lvl": 1,
+			"location": 71,
+			"nation": "COR"
+		}
+	}
+}
