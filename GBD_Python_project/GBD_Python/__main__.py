@@ -16,7 +16,7 @@ def main() -> None:
 
         elif gameStatus == 2:
             print("game loading")
-            game = Game(1920, 1080, nation)
+            game = Game(1920, 1080, nation) 
             gameStatus = 3
 
         elif gameStatus == 1:

@@ -78,6 +78,7 @@ class Unit:
         self.update_spotting()
         self.calculate_visibility()
         self.calculate_logistics_value()
+        self.calculate_logistic_consumption()
 
 
     def return_status(self):
@@ -194,6 +195,10 @@ class Unit:
             self.unit_spotting = [0,1]
         elif self.status == 13:
             self.unit_spotting = [0,1]
+        elif self.status == 14:
+            self.unit_spotting = [50,50]
+        elif self.status == 15:
+            self.unit_spotting = [10,10]
 
 
     def update_dectectability(self):
@@ -225,6 +230,10 @@ class Unit:
         elif self.status == 12:
             self.unit_dectectability = 100
         elif self.status == 13:
+            self.unit_dectectability = 100
+        elif self.status == 14:
+            self.unit_dectectability = 100
+        elif self.status == 15:
             self.unit_dectectability = 100
 
     def return_home(self):
