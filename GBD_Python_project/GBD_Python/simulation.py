@@ -1093,10 +1093,13 @@ class logisticsManager:
 	def __init__(self, nation, simulation=None):
 		self.nation = nation
 		self.simulation = simulation
+		self.debug_enabled = True
+		self.source_surplus_buffer = 3000
 		self.provinces = []
 		self.suply_list = []
 		self.ammo_list = []
 		self.pending_supply_requests = []
+		self.pending_province_supply_requests = []
 		self._request_counter = 0
 		
 		self.logistics_units = []
@@ -1112,6 +1115,10 @@ class logisticsManager:
 		self._train_assignment_counter = 0
 		self.manual_logistics_assignments = []
 		self._logistics_assignment_counter = 0
+
+	def _debug(self, message):
+		if self.debug_enabled:
+			print(f"[LOGI][{self.nation}] {message}")
 
 	def bind_context(self, simulation):
 		self.simulation = simulation
@@ -1141,6 +1148,7 @@ class logisticsManager:
 		print(f"  Train Locations: {self.train_locations}")
 		print(f"  Logistics Units: {self.logistics_units}")
 		print(f"  Pending Supply Requests: {self.pending_supply_requests}")
+		print(f"  Pending Province Supply Requests: {self.pending_province_supply_requests}")
 		print(f"  Manual Train Assignments: {self.manual_train_assignments}")
 		print(f"  Manual Logistics Assignments: {self.manual_logistics_assignments}")
 
@@ -1210,12 +1218,12 @@ class logisticsManager:
 		return True
 
 	def _source_is_train_eligible(self, source_province_id):
-		if source_province_id in self.logistics_hubs:
-			return True
 		province = self._get_province_object(source_province_id)
 		if province is None:
 			return False
-		return self._province_suply_value(province) >= 1000
+		current_suply = self._province_suply_value(province)
+		target_suply = max(0, int(getattr(province, "target_suply", 0) or 0))
+		return current_suply > (target_suply + self.source_surplus_buffer)
 
 	def _source_is_logistics_eligible(self, source_province_id):
 		# Logistics companies load from hubs in this phase.
@@ -1224,7 +1232,9 @@ class logisticsManager:
 		province = self._get_province_object(source_province_id)
 		if province is None:
 			return False
-		return self._province_suply_value(province) > 0
+		current_suply = self._province_suply_value(province)
+		target_suply = max(0, int(getattr(province, "target_suply", 0) or 0))
+		return current_suply > (target_suply + self.source_surplus_buffer)
 
 	def _assignment_is_open(self, assignment):
 		return assignment.get("status") not in ("completed", "failed", "cancelled")
@@ -1287,6 +1297,14 @@ class logisticsManager:
 				return True
 		return False
 
+	def _has_open_delivery_for_province(self, destination_province_id):
+		for assignment in self.manual_logistics_assignments:
+			if not self._assignment_is_open(assignment):
+				continue
+			if assignment.get("destination_province_id") == int(destination_province_id):
+				return True
+		return False
+
 	def _available_trains_for_planning(self):
 		trains = []
 		for train_id in self.trains:
@@ -1300,6 +1318,7 @@ class logisticsManager:
 			if self._train_busy(train.id):
 				continue
 			trains.append(train)
+		self._debug(f"Planner train pool: {[str(getattr(t, 'id', '')) for t in trains]}")
 		return trains
 
 	def _available_logistics_units_for_planning(self):
@@ -1314,6 +1333,7 @@ class logisticsManager:
 			if self._logistics_unit_busy(unit.id):
 				continue
 			units.append(unit)
+		self._debug(f"Planner logistics pool: {[str(getattr(u, 'id', '')) for u in units]}")
 		return units
 
 	def _available_hub_stockpiles_for_planning(self):
@@ -1321,7 +1341,14 @@ class logisticsManager:
 		for province_id, current_suply, _ in self.provinces:
 			if province_id not in self.logistics_hubs:
 				continue
-			stock_by_hub[province_id] = max(0, int(current_suply or 0))
+			province = self._get_province_object(province_id)
+			target_suply = max(0, int(getattr(province, "target_suply", 0) or 0)) if province is not None else 0
+			current_suply = max(0, int(current_suply or 0))
+			reservable_surplus = max(0, current_suply - (target_suply + self.source_surplus_buffer))
+			stock_by_hub[province_id] = reservable_surplus
+		self._debug(
+			f"Planner hub reservable surplus snapshot (buffer={self.source_surplus_buffer}): {stock_by_hub}"
+		)
 		return stock_by_hub
 
 	def _create_train_assignment_for_plan(self, train, source_hub, destination_hub, amount):
@@ -1333,33 +1360,226 @@ class logisticsManager:
 		)
 		if assignment is not None:
 			assignment["created_by"] = "planner"
+			self._debug(
+				f"Planner created train assignment {assignment['assignment_id']} train={assignment['train_id']} "
+				f"{source_hub}->{destination_hub} amount={amount}"
+			)
+		else:
+			self._debug(
+				f"Planner failed to create train assignment train={getattr(train, 'id', None)} "
+				f"{source_hub}->{destination_hub} amount={amount}"
+			)
 		return assignment
 
-	def _create_logistics_assignment_for_plan(self, logistics_unit, source_hub, destination_unit_id, amount):
+	def _create_logistics_assignment_for_plan(self, logistics_unit, source_hub, amount, destination_unit_id=None, destination_province_id=None):
 		assignment = self.create_manual_logistics_supply_assignment(
 			logistics_unit_id=logistics_unit.id,
 			source_hub_province_id=source_hub,
 			destination_unit_id=destination_unit_id,
+			destination_province_id=destination_province_id,
 			amount=amount,
 		)
 		if assignment is not None:
 			assignment["created_by"] = "planner"
+			if destination_unit_id is not None:
+				destination_text = f"unit={destination_unit_id}"
+			else:
+				destination_text = f"province={destination_province_id}"
+			self._debug(
+				f"Planner created logistics assignment {assignment['assignment_id']} unit={assignment['logistics_unit_id']} "
+				f"source_hub={source_hub} -> {destination_text} amount={amount}"
+			)
+		else:
+			if destination_unit_id is not None:
+				destination_text = f"unit={destination_unit_id}"
+			else:
+				destination_text = f"province={destination_province_id}"
+			self._debug(
+				f"Planner failed to create logistics assignment unit={getattr(logistics_unit, 'id', None)} "
+				f"source_hub={source_hub} -> {destination_text} amount={amount}"
+			)
 		return assignment
+
+	def _allocate_train_refill_for_hub(self, front_hub, requested_suply, available_hubs, available_trains, reserved_stock):
+		if reserved_stock.get(front_hub, 0) > 0:
+			return False
+		if not available_trains:
+			return False
+
+		candidate_source = None
+		candidate_amount = 0
+		for hub_id in available_hubs:
+			if hub_id == front_hub:
+				continue
+			if reserved_stock.get(hub_id, 0) <= 0:
+				continue
+			if not self._rail_path_exists(hub_id, front_hub):
+				continue
+			available_amount = min(requested_suply, reserved_stock.get(hub_id, 0))
+			if available_amount > candidate_amount:
+				candidate_source = hub_id
+				candidate_amount = available_amount
+
+		if candidate_source is None or candidate_amount <= 0:
+			return False
+
+		train = available_trains.pop(0)
+		self._debug(
+			f"  Hub refill needed: using train {getattr(train, 'id', None)} source={candidate_source} "
+			f"to front_hub={front_hub} amount={candidate_amount}"
+		)
+		assignment = self._create_train_assignment_for_plan(train, candidate_source, front_hub, candidate_amount)
+		if assignment is None:
+			return False
+
+		reserved_stock[candidate_source] = max(0, reserved_stock.get(candidate_source, 0) - candidate_amount)
+		reserved_stock[front_hub] = reserved_stock.get(front_hub, 0) + candidate_amount
+		self._debug(
+			f"  Virtual reserve updated: source_hub={candidate_source}->{reserved_stock.get(candidate_source, 0)} "
+			f"front_hub={front_hub}->{reserved_stock.get(front_hub, 0)}"
+		)
+		return True
+
+	def _assign_logistics_delivery_from_hub(self, front_hub, requested_suply, available_logistics_units, reserved_stock, destination_unit_id=None, destination_province_id=None):
+		if reserved_stock.get(front_hub, 0) <= 0:
+			self._debug("  Skipped: front hub has no reservable stock")
+			return False
+		if not available_logistics_units:
+			self._debug("  Skipped: no available logistics units")
+			return False
+
+		available_amount = min(requested_suply, reserved_stock.get(front_hub, 0))
+		if available_amount <= 0:
+			self._debug("  Skipped: available amount at front hub is 0")
+			return False
+
+		best_idx = None
+		best_dist = float("inf")
+		for idx, logi_unit in enumerate(available_logistics_units):
+			distance = self._distance_hops(getattr(logi_unit, "location", None), front_hub)
+			if distance < best_dist:
+				best_dist = distance
+				best_idx = idx
+
+		if best_idx is None:
+			self._debug("  Skipped: no logistics unit could be selected")
+			return False
+
+		logistics_unit = available_logistics_units.pop(best_idx)
+		if destination_unit_id is not None:
+			self._debug(
+				f"  Assigning logistics unit {getattr(logistics_unit, 'id', None)} from hub={front_hub} "
+				f"to unit={destination_unit_id} amount={available_amount}"
+			)
+		else:
+			self._debug(
+				f"  Assigning logistics unit {getattr(logistics_unit, 'id', None)} from hub={front_hub} "
+				f"to province={destination_province_id} amount={available_amount}"
+			)
+
+		assignment = self._create_logistics_assignment_for_plan(
+			logistics_unit,
+			source_hub=front_hub,
+			amount=available_amount,
+			destination_unit_id=destination_unit_id,
+			destination_province_id=destination_province_id,
+		)
+		if assignment is None:
+			self._debug("  Logistics assignment creation failed")
+			return False
+
+		reserved_stock[front_hub] = max(0, reserved_stock.get(front_hub, 0) - available_amount)
+		self._debug(f"  Virtual reserve updated: front_hub={front_hub}->{reserved_stock.get(front_hub, 0)}")
+		return True
+
+	def _generate_province_target_requests(self):
+		"""Create daily requests for provinces below player-defined target supply."""
+		self.pending_province_supply_requests = []
+
+		for province_id, current_suply, _ in self.provinces:
+			province = self._get_province_object(province_id)
+			if province is None:
+				continue
+
+			target_suply = max(0, int(getattr(province, "target_suply", 0) or 0))
+			if target_suply <= 0:
+				continue
+
+			current_suply = max(0, int(current_suply or 0))
+			requested_amount = max(0, target_suply - current_suply)
+			if requested_amount <= 0:
+				continue
+
+			request_id = f"{self.nation}-PRVREQ-{province_id}"
+			request_entry = {
+				"request_id": request_id,
+				"province_id": int(province_id),
+				"nation": self.nation,
+				"current_suply": current_suply,
+				"target_suply": target_suply,
+				"requested_suply": requested_amount,
+			}
+			self.pending_province_supply_requests.append(request_entry)
+			self._debug(
+				f"Generated province target request {request_id} province={province_id} "
+				f"current={current_suply} target={target_suply} requested={requested_amount}"
+			)
+
+		self._debug(f"Province target request generation done: {len(self.pending_province_supply_requests)} requests")
 
 	def _run_daily_logistics_planner(self):
 		"""Create daily transport assignments from requests without moving inventories."""
-		if not self.pending_supply_requests:
+		total_requests = len(self.pending_supply_requests) + len(self.pending_province_supply_requests)
+		self._debug(
+			f"Daily planner start: unit_requests={len(self.pending_supply_requests)} "
+			f"province_requests={len(self.pending_province_supply_requests)}"
+		)
+		if total_requests <= 0:
+			self._debug("Daily planner exit: no pending requests")
 			return {"train_assignments": 0, "logistics_assignments": 0}
 
 		available_trains = self._available_trains_for_planning()
 		available_logistics_units = self._available_logistics_units_for_planning()
 		available_hubs = list(self.logistics_hubs)
 		if not available_hubs:
+			self._debug("Daily planner exit: no logistics hubs available")
 			return {"train_assignments": 0, "logistics_assignments": 0}
 
 		reserved_stock = self._available_hub_stockpiles_for_planning()
 		train_created = 0
 		logistics_created = 0
+
+		province_requests = sorted(self.pending_province_supply_requests, key=lambda req: -int(req.get("requested_suply", 0)))
+		for request in province_requests:
+			province_id = int(request.get("province_id"))
+			requested_suply = max(0, int(request.get("requested_suply", 0) or 0))
+			self._debug(
+				f"Planner province request {request.get('request_id')} province={province_id} requested={requested_suply}"
+			)
+			if requested_suply <= 0:
+				self._debug("  Skipped: requested supply <= 0")
+				continue
+			if self._has_open_delivery_for_province(province_id):
+				self._debug(f"  Skipped: province {province_id} already has open delivery assignment")
+				continue
+
+			front_hub, _ = self._nearest_hub(province_id, available_hubs)
+			if front_hub is None:
+				self._debug("  Skipped: no reachable front hub")
+				continue
+			self._debug(f"  Front hub selected: {front_hub} current_reserved={reserved_stock.get(front_hub, 0)}")
+
+			if self._allocate_train_refill_for_hub(front_hub, requested_suply, available_hubs, available_trains, reserved_stock):
+				train_created += 1
+
+			if self._assign_logistics_delivery_from_hub(
+				front_hub=front_hub,
+				requested_suply=requested_suply,
+				available_logistics_units=available_logistics_units,
+				reserved_stock=reserved_stock,
+				destination_province_id=province_id,
+			):
+				logistics_created += 1
 
 		requests = sorted(self.pending_supply_requests, key=lambda req: (-int(req.get("daily_consumption", 0)), -int(req.get("requested_suply", 0))))
 
@@ -1367,65 +1587,37 @@ class logisticsManager:
 			unit_id = request.get("unit_id")
 			unit_location = request.get("location")
 			requested_suply = max(0, int(request.get("requested_suply", 0) or 0))
+			self._debug(
+				f"Planner request {request.get('request_id')} unit={unit_id} loc={unit_location} requested={requested_suply}"
+			)
 			if requested_suply <= 0:
+				self._debug("  Skipped: requested supply <= 0")
 				continue
 			if self._has_open_delivery_for_unit(unit_id):
+				self._debug(f"  Skipped: unit {unit_id} already has open delivery assignment")
 				continue
 
 			front_hub, _ = self._nearest_hub(unit_location, available_hubs)
 			if front_hub is None:
+				self._debug("  Skipped: no reachable front hub")
 				continue
+			self._debug(f"  Front hub selected: {front_hub} current_reserved={reserved_stock.get(front_hub, 0)}")
 
-			if reserved_stock.get(front_hub, 0) <= 0 and available_trains:
-				candidate_source = None
-				candidate_amount = 0
-				for hub_id in available_hubs:
-					if hub_id == front_hub:
-						continue
-					if reserved_stock.get(hub_id, 0) <= 0:
-						continue
-					if not self._rail_path_exists(hub_id, front_hub):
-						continue
-					available_amount = min(requested_suply, reserved_stock.get(hub_id, 0))
-					if available_amount > candidate_amount:
-						candidate_source = hub_id
-						candidate_amount = available_amount
+			if self._allocate_train_refill_for_hub(front_hub, requested_suply, available_hubs, available_trains, reserved_stock):
+				train_created += 1
 
-				if candidate_source is not None and candidate_amount > 0:
-					train = available_trains.pop(0)
-					assignment = self._create_train_assignment_for_plan(train, candidate_source, front_hub, candidate_amount)
-					if assignment is not None:
-						reserved_stock[candidate_source] = max(0, reserved_stock.get(candidate_source, 0) - candidate_amount)
-						reserved_stock[front_hub] = reserved_stock.get(front_hub, 0) + candidate_amount
-						train_created += 1
+			if self._assign_logistics_delivery_from_hub(
+				front_hub=front_hub,
+				requested_suply=requested_suply,
+				available_logistics_units=available_logistics_units,
+				reserved_stock=reserved_stock,
+				destination_unit_id=unit_id,
+			):
+				logistics_created += 1
 
-			if reserved_stock.get(front_hub, 0) <= 0:
-				continue
-			if not available_logistics_units:
-				continue
-
-			available_amount = min(requested_suply, reserved_stock.get(front_hub, 0))
-			if available_amount <= 0:
-				continue
-
-			best_idx = None
-			best_dist = float("inf")
-			for idx, logi_unit in enumerate(available_logistics_units):
-				distance = self._distance_hops(getattr(logi_unit, "location", None), front_hub)
-				if distance < best_dist:
-					best_dist = distance
-					best_idx = idx
-
-			if best_idx is None:
-				continue
-
-			logistics_unit = available_logistics_units.pop(best_idx)
-			assignment = self._create_logistics_assignment_for_plan(logistics_unit, front_hub, unit_id, available_amount)
-			if assignment is None:
-				continue
-
-			reserved_stock[front_hub] = max(0, reserved_stock.get(front_hub, 0) - available_amount)
-			logistics_created += 1
+		self._debug(
+			f"Daily planner done: train_assignments={train_created}, logistics_assignments={logistics_created}"
+		)
 
 		return {
 			"train_assignments": train_created,
@@ -1436,22 +1628,38 @@ class logisticsManager:
 		"""Create a manual train supply transfer assignment for test/debug workflows."""
 		train = self._get_train(train_id)
 		if train is None:
+			self._debug(f"Train assignment rejected: train {train_id} not found")
 			return None
 		if not self._is_train_automatic(train):
+			self._debug(f"Train assignment rejected: train {train_id} not eligible for automatic assignment")
 			return None
 
 		source = int(source_province_id)
 		destination = int(destination_province_id)
 		amount = max(0, int(amount or 0))
 		if amount <= 0:
+			self._debug("Train assignment rejected: amount <= 0")
 			return None
+
+		current_suply = max(0, int(getattr(train, "suply", 0) or 0))
+		capacity = max(0, int(getattr(train, "suplyCapacity", 0) or 0))
+		available_capacity = max(0, capacity - current_suply)
+		amount = min(amount, available_capacity)
+		if amount <= 0:
+			self._debug("Train assignment rejected: no available train capacity")
+			return None
+
 		if source == destination:
+			self._debug("Train assignment rejected: source equals destination")
 			return None
 		if destination not in self.logistics_hubs:
+			self._debug(f"Train assignment rejected: destination {destination} is not a logistics hub")
 			return None
 		if not self._source_is_train_eligible(source):
+			self._debug(f"Train assignment rejected: source {source} is not eligible")
 			return None
 		if not self._rail_path_exists(source, destination):
+			self._debug(f"Train assignment rejected: no rail path {source}->{destination}")
 			return None
 
 		assignment = {
@@ -1468,29 +1676,55 @@ class logisticsManager:
 		}
 
 		self.manual_train_assignments.append(assignment)
+		self._debug(
+			f"Train assignment created: id={assignment['assignment_id']} train={assignment['train_id']} "
+			f"{source}->{destination} target={amount}"
+		)
 		return assignment
 
-	def create_manual_logistics_supply_assignment(self, logistics_unit_id, source_hub_province_id, destination_unit_id, amount):
+	def create_manual_logistics_supply_assignment(self, logistics_unit_id, source_hub_province_id, amount, destination_unit_id=None, destination_province_id=None):
 		"""Create a manual logistics-company supply assignment for test/debug workflows."""
 		logistics_unit = self._get_unit(logistics_unit_id)
 		if logistics_unit is None:
+			self._debug(f"Logistics assignment rejected: logistics unit {logistics_unit_id} not found")
 			return None
 		if not self._is_logistics_unit_automatic(logistics_unit):
+			self._debug(f"Logistics assignment rejected: unit {logistics_unit_id} not eligible")
 			return None
 
 		source = int(source_hub_province_id)
-		destination_unit = self._get_unit(destination_unit_id)
-		if destination_unit is None:
+
+		has_destination_unit = destination_unit_id is not None
+		has_destination_province = destination_province_id is not None
+		if has_destination_unit == has_destination_province:
+			self._debug("Logistics assignment rejected: destination must be exactly one of unit or province")
 			return None
-		if getattr(destination_unit, "nation", None) != self.nation:
-			return None
-		if getattr(destination_unit, "type", None) == 4:
-			return None
+
+		destination_unit = None
+		destination_province = None
+		if has_destination_unit:
+			destination_unit = self._get_unit(destination_unit_id)
+			if destination_unit is None:
+				self._debug(f"Logistics assignment rejected: destination unit {destination_unit_id} not found")
+				return None
+			if getattr(destination_unit, "nation", None) != self.nation:
+				self._debug(f"Logistics assignment rejected: destination unit {destination_unit_id} not in nation {self.nation}")
+				return None
+			if getattr(destination_unit, "type", None) == 4:
+				self._debug("Logistics assignment rejected: destination unit is logistics type")
+				return None
+		else:
+			destination_province = self._get_province_object(int(destination_province_id))
+			if destination_province is None:
+				self._debug(f"Logistics assignment rejected: destination province {destination_province_id} not found")
+				return None
 
 		amount = max(0, int(amount or 0))
 		if amount <= 0:
+			self._debug("Logistics assignment rejected: amount <= 0")
 			return None
 		if not self._source_is_logistics_eligible(source):
+			self._debug(f"Logistics assignment rejected: source hub {source} not eligible")
 			return None
 
 		assignment = {
@@ -1498,7 +1732,8 @@ class logisticsManager:
 			"assignment_type": "manual_logistics_supply",
 			"logistics_unit_id": str(logistics_unit.id),
 			"source_province_id": source,
-			"destination_unit_id": str(destination_unit.id),
+			"destination_unit_id": str(destination_unit.id) if destination_unit is not None else None,
+			"destination_province_id": int(destination_province_id) if destination_province is not None else None,
 			"target_amount": amount,
 			"loaded_amount": 0,
 			"delivered_amount": 0,
@@ -1507,22 +1742,33 @@ class logisticsManager:
 		}
 
 		self.manual_logistics_assignments.append(assignment)
+		if destination_unit is not None:
+			destination_text = f"destination_unit={assignment['destination_unit_id']}"
+		else:
+			destination_text = f"destination_province={assignment['destination_province_id']}"
+		self._debug(
+			f"Logistics assignment created: id={assignment['assignment_id']} logi_unit={assignment['logistics_unit_id']} "
+			f"source_hub={source} {destination_text} target={amount}"
+		)
 		return assignment
 
 	def _execute_single_train_assignment_tick(self, assignment):
 		if self.simulation is None:
 			assignment["status"] = "failed"
 			assignment["reason"] = "no-simulation"
+			self._debug(f"Train assignment {assignment.get('assignment_id')} failed: no simulation")
 			return
 
 		train = self._get_train(assignment["train_id"])
 		if train is None:
 			assignment["status"] = "failed"
 			assignment["reason"] = "train-missing"
+			self._debug(f"Train assignment {assignment.get('assignment_id')} failed: train missing")
 			return
 		if not self._is_train_automatic(train):
 			assignment["status"] = "failed"
 			assignment["reason"] = "train-not-automatic"
+			self._debug(f"Train assignment {assignment.get('assignment_id')} failed: train not eligible")
 			return
 
 		source = assignment["source_province_id"]
@@ -1532,9 +1778,11 @@ class logisticsManager:
 			if int(getattr(train, "location", 0)) != source:
 				if self.simulation._find_train_movement_index(train.id) is None:
 					self.simulation.train_pathing(train.id, source)
+					self._debug(f"Train assignment {assignment.get('assignment_id')} pathing train {train.id} to source {source}")
 				assignment["status"] = "active"
 				return
 			assignment["phase"] = "loading"
+			self._debug(f"Train assignment {assignment.get('assignment_id')} reached source {source}, switching to loading")
 			assignment["status"] = "active"
 
 		if assignment["phase"] == "loading":
@@ -1542,11 +1790,13 @@ class logisticsManager:
 			if province is None:
 				assignment["status"] = "failed"
 				assignment["reason"] = "source-missing"
+				self._debug(f"Train assignment {assignment.get('assignment_id')} failed: source province missing")
 				return
 
 			remaining_to_load = max(0, int(assignment["target_amount"] - assignment["loaded_amount"]))
 			if remaining_to_load <= 0:
 				assignment["phase"] = "to_destination"
+				self._debug(f"Train assignment {assignment.get('assignment_id')} already loaded target, switching to destination")
 				return
 
 			current_suply = max(0, int(getattr(train, "suply", 0) or 0))
@@ -1556,29 +1806,37 @@ class logisticsManager:
 
 			load_amount = min(1000, remaining_to_load, free_capacity, source_available)
 			if load_amount <= 0:
-				# If full or source is temporarily dry, move on with what is loaded.
-				assignment["phase"] = "to_destination"
+				# Wait at source until enough supply is available to finish the assigned load.
+				self._debug(
+					f"Train assignment {assignment.get('assignment_id')} waiting at source={source} "
+					f"remaining_to_load={remaining_to_load} source_available={source_available} free_capacity={free_capacity}"
+				)
 				return
 
 			province.transfer_suply(load_amount)
 			train.suply = current_suply + load_amount
 			assignment["loaded_amount"] += load_amount
 			assignment["status"] = "active"
+			self._debug(
+				f"Train assignment {assignment.get('assignment_id')} loaded {load_amount} at source={source} "
+				f"loaded_total={assignment['loaded_amount']} train_suply={getattr(train, 'suply', 0)}"
+			)
 
 			remaining_to_load = max(0, int(assignment["target_amount"] - assignment["loaded_amount"]))
-			current_suply = max(0, int(getattr(train, "suply", 0) or 0))
-			free_capacity = max(0, capacity - current_suply)
-			if remaining_to_load <= 0 or free_capacity <= 0:
+			if remaining_to_load <= 0:
 				assignment["phase"] = "to_destination"
+				self._debug(f"Train assignment {assignment.get('assignment_id')} switching to destination phase")
 			return
 
 		if assignment["phase"] == "to_destination":
 			if int(getattr(train, "location", 0)) != destination:
 				if self.simulation._find_train_movement_index(train.id) is None:
 					self.simulation.train_pathing(train.id, destination)
+					self._debug(f"Train assignment {assignment.get('assignment_id')} pathing train {train.id} to destination {destination}")
 				assignment["status"] = "active"
 				return
 			assignment["phase"] = "unloading"
+			self._debug(f"Train assignment {assignment.get('assignment_id')} reached destination {destination}, switching to unloading")
 			assignment["status"] = "active"
 
 		if assignment["phase"] == "unloading":
@@ -1586,6 +1844,7 @@ class logisticsManager:
 			if province is None:
 				assignment["status"] = "failed"
 				assignment["reason"] = "destination-missing"
+				self._debug(f"Train assignment {assignment.get('assignment_id')} failed: destination province missing")
 				return
 
 			remaining_to_deliver = max(0, int(assignment["loaded_amount"] - assignment["delivered_amount"]))
@@ -1594,16 +1853,22 @@ class logisticsManager:
 
 			if unload_amount <= 0:
 				assignment["status"] = "completed"
+				self._debug(f"Train assignment {assignment.get('assignment_id')} completed with unload_amount=0")
 				return
 
 			train.suply = train_suply - unload_amount
 			province.add_suply(unload_amount)
 			assignment["delivered_amount"] += unload_amount
 			assignment["status"] = "active"
+			self._debug(
+				f"Train assignment {assignment.get('assignment_id')} unloaded {unload_amount} at destination={destination} "
+				f"delivered_total={assignment['delivered_amount']} train_suply={getattr(train, 'suply', 0)}"
+			)
 
 			remaining_to_deliver = max(0, int(assignment["loaded_amount"] - assignment["delivered_amount"]))
 			if remaining_to_deliver <= 0:
 				assignment["status"] = "completed"
+				self._debug(f"Train assignment {assignment.get('assignment_id')} completed")
 
 	def execute_manual_train_assignments_tick(self):
 		"""Execute existing manual train assignments without creating new plans."""
@@ -1616,34 +1881,58 @@ class logisticsManager:
 		if self.simulation is None:
 			assignment["status"] = "failed"
 			assignment["reason"] = "no-simulation"
+			self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: no simulation")
 			return
 
 		logistics_unit = self._get_unit(assignment["logistics_unit_id"])
 		if logistics_unit is None:
 			assignment["status"] = "failed"
 			assignment["reason"] = "logistics-unit-missing"
+			self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: logistics unit missing")
 			return
 		if not self._is_logistics_unit_automatic(logistics_unit):
 			assignment["status"] = "failed"
 			assignment["reason"] = "unit-not-automatic"
+			self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: unit not eligible")
 			return
 
-		destination_unit = self._get_unit(assignment["destination_unit_id"])
-		if destination_unit is None:
+		destination_unit_id = assignment.get("destination_unit_id")
+		destination_province_id = assignment.get("destination_province_id")
+		destination_unit = None
+		destination_province = None
+		if destination_unit_id is not None:
+			destination_unit = self._get_unit(destination_unit_id)
+			if destination_unit is None:
+				assignment["status"] = "failed"
+				assignment["reason"] = "destination-unit-missing"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: destination unit missing")
+				return
+			destination = int(getattr(destination_unit, "location", 0) or 0)
+		elif destination_province_id is not None:
+			destination_province = self._get_province_object(int(destination_province_id))
+			if destination_province is None:
+				assignment["status"] = "failed"
+				assignment["reason"] = "destination-province-missing"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: destination province missing")
+				return
+			destination = int(destination_province_id)
+		else:
 			assignment["status"] = "failed"
-			assignment["reason"] = "destination-unit-missing"
+			assignment["reason"] = "invalid-destination"
+			self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: invalid destination")
 			return
 
 		source = assignment["source_province_id"]
-		destination = int(getattr(destination_unit, "location", 0) or 0)
 
 		if assignment["phase"] == "to_source":
 			if int(getattr(logistics_unit, "location", 0) or 0) != source:
 				if self.simulation._find_movement_index(logistics_unit.id) is None:
 					self.simulation.pathing(logistics_unit.id, source)
+					self._debug(f"Logistics assignment {assignment.get('assignment_id')} pathing unit {logistics_unit.id} to source {source}")
 				assignment["status"] = "active"
 				return
 			assignment["phase"] = "loading"
+			self._debug(f"Logistics assignment {assignment.get('assignment_id')} reached source {source}, switching to loading")
 			assignment["status"] = "active"
 
 		if assignment["phase"] == "loading":
@@ -1651,11 +1940,13 @@ class logisticsManager:
 			if province is None:
 				assignment["status"] = "failed"
 				assignment["reason"] = "source-missing"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: source province missing")
 				return
 
 			if not self._source_is_logistics_eligible(source):
 				assignment["status"] = "failed"
 				assignment["reason"] = "source-not-eligible"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: source {source} not eligible")
 				return
 
 			logistics_unit.calculate_logistics_value()
@@ -1670,20 +1961,27 @@ class logisticsManager:
 				if assignment["loaded_amount"] <= 0:
 					assignment["status"] = "failed"
 					assignment["reason"] = "nothing-loaded"
+					self._debug(f"Logistics assignment {assignment.get('assignment_id')} failed: nothing loaded")
 					return
 				assignment["phase"] = "to_destination"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} switching to destination with partial load")
 				return
 
 			province.transfer_suply(load_amount)
 			logistics_unit.load_suply(load_amount)
 			assignment["loaded_amount"] += load_amount
 			assignment["status"] = "active"
+			self._debug(
+				f"Logistics assignment {assignment.get('assignment_id')} loaded {load_amount} at source={source} "
+				f"loaded_total={assignment['loaded_amount']} unit_suply={getattr(logistics_unit, 'suply', 0)}"
+			)
 
 			remaining_to_load = max(0, int(assignment["target_amount"] - assignment["loaded_amount"]))
 			current_suply = max(0, int(getattr(logistics_unit, "suply", 0) or 0))
 			free_capacity = max(0, capacity - current_suply)
 			if remaining_to_load <= 0 or free_capacity <= 0:
 				assignment["phase"] = "to_destination"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} switching to destination phase")
 			return
 
 		if assignment["phase"] == "to_destination":
@@ -1691,9 +1989,11 @@ class logisticsManager:
 			if current_location != destination:
 				if self.simulation._find_movement_index(logistics_unit.id) is None:
 					self.simulation.pathing(logistics_unit.id, destination)
+					self._debug(f"Logistics assignment {assignment.get('assignment_id')} pathing unit {logistics_unit.id} to destination {destination}")
 				assignment["status"] = "active"
 				return
 			assignment["phase"] = "unloading"
+			self._debug(f"Logistics assignment {assignment.get('assignment_id')} reached destination {destination}, switching to unloading")
 			assignment["status"] = "active"
 
 		if assignment["phase"] == "unloading":
@@ -1703,21 +2003,33 @@ class logisticsManager:
 
 			if unload_amount <= 0:
 				assignment["status"] = "completed"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} completed with unload_amount=0")
 				return
 
 			actual_unloaded = logistics_unit.unload_suply(unload_amount)
 			actual_unloaded = max(0, int(actual_unloaded or 0))
 			if actual_unloaded <= 0:
 				assignment["status"] = "completed"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} completed with actual_unloaded=0")
 				return
 
-			destination_unit.add_suply(actual_unloaded)
+			if destination_unit is not None:
+				destination_unit.add_suply(actual_unloaded)
+				destination_text = f"unit={destination_unit.id}"
+			else:
+				destination_province.add_suply(actual_unloaded)
+				destination_text = f"province={destination}"
 			assignment["delivered_amount"] += actual_unloaded
 			assignment["status"] = "active"
+			self._debug(
+				f"Logistics assignment {assignment.get('assignment_id')} unloaded {actual_unloaded} to {destination_text} "
+				f"delivered_total={assignment['delivered_amount']} carrier_suply={getattr(logistics_unit, 'suply', 0)}"
+			)
 
 			remaining_to_deliver = max(0, int(assignment["loaded_amount"] - assignment["delivered_amount"]))
 			if remaining_to_deliver <= 0:
 				assignment["status"] = "completed"
+				self._debug(f"Logistics assignment {assignment.get('assignment_id')} completed")
 
 	def execute_manual_logistics_assignments_tick(self):
 		"""Execute existing manual logistics-company assignments without auto planning."""
@@ -1829,7 +2141,7 @@ class logisticsManager:
 			if requested_amount <= 0:
 				continue
 
-			self.pending_supply_requests.append({
+			request_entry = {
 				"request_id": self._next_request_id(),
 				"unit_id": str(unit_id),
 				"nation": self.nation,
@@ -1838,12 +2150,22 @@ class logisticsManager:
 				"daily_consumption": daily_consumption,
 				"projected_after_daily": projected_after_daily,
 				"requested_suply": requested_amount,
-			})
+			}
+			self.pending_supply_requests.append(request_entry)
+			self._debug(
+				f"Generated request {request_entry['request_id']} unit={request_entry['unit_id']} "
+				f"loc={location} current={current_suply} daily={daily_consumption} "
+				f"projected={projected_after_daily} requested={requested_amount}"
+			)
+
+		self._debug(f"Request generation done: {len(self.pending_supply_requests)} requests")
 
 	def routine(self):
+		self._debug("Daily logistics routine start")
 		self.refresh_province_stockpiles()
 		self._collect_unit_supply_cycle()
 		self._generate_supply_requests()
+		self._generate_province_target_requests()
 		planner_result = self._run_daily_logistics_planner()
 		total_suply = sum(entry[1] for entry in self.provinces)
 		total_ammo = sum(entry[2] for entry in self.provinces)
@@ -1857,6 +2179,7 @@ class logisticsManager:
 			f"planner_train_assignments={planner_result['train_assignments']}, "
 			f"planner_logistics_assignments={planner_result['logistics_assignments']}"
 		)
+		self._debug("Daily logistics routine end")
 
 	def suply_cost(self):
 		#this takes all the unit costs and adds them up to see how much supply is needed for the nation and provide that info for the player 

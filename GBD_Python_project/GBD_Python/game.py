@@ -296,6 +296,24 @@ class Game:
         state = "enabled" if province_obj.is_logistic_hub() else "disabled"
         return True, f"Logistics hub {state} for province {self.province_selected}."
 
+    def change_selected_province_target_suply(self, delta: int):
+        """Adjust selected province target supply by delta for logistics planning."""
+        if not self.province_selected:
+            return False, "Select a province first."
+
+        province = self.map.get_province_by_id(self.province_selected)
+        province_obj = self.map.get_province_object_by_id(self.province_selected)
+        if province is None or province_obj is None:
+            return False, "Selected province is unavailable."
+
+        if not self.graphics.can_toggle_logistic_hub_in_selected_province(province, province_obj):
+            return False, "Only player-side provinces can change target supply."
+
+        current_target = int(getattr(province_obj, "target_suply", 0) or 0)
+        new_target = max(0, current_target + int(delta))
+        province_obj.set_target_suply(new_target)
+        return True, f"Province {self.province_selected} target supply set to {new_target}."
+
     def key_handler(self) -> None:
         keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT]:
@@ -339,6 +357,18 @@ class Game:
 
                     if self.graphics.is_province_logistics_hub_checkbox_point(mx, my):
                         changed, message = self.toggle_selected_province_logistics_hub()
+                        print(message)
+                        self._drag_select_active = False
+                        continue
+
+                    if self.graphics.is_province_target_suply_minus_point(mx, my):
+                        changed, message = self.change_selected_province_target_suply(-500)
+                        print(message)
+                        self._drag_select_active = False
+                        continue
+
+                    if self.graphics.is_province_target_suply_plus_point(mx, my):
+                        changed, message = self.change_selected_province_target_suply(500)
                         print(message)
                         self._drag_select_active = False
                         continue

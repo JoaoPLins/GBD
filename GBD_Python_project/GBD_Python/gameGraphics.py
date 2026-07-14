@@ -43,6 +43,8 @@ class Graphics:
         self._province_create_unit_button_rect: Optional[pygame.Rect] = None
         self._province_create_logistics_button_rect: Optional[pygame.Rect] = None
         self._province_logistics_hub_checkbox_rect: Optional[pygame.Rect] = None
+        self._province_target_suply_minus_rect: Optional[pygame.Rect] = None
+        self._province_target_suply_plus_rect: Optional[pygame.Rect] = None
         self.people_button_image: Optional[pygame.Surface] = None
         self.people_overlay_bg_image: Optional[pygame.Surface] = None
         self.people_quit_button_image: Optional[pygame.Surface] = None
@@ -1019,6 +1021,14 @@ class Graphics:
         """Return True when a click lands on the province logistics hub checkbox."""
         return self._province_logistics_hub_checkbox_rect is not None and self._province_logistics_hub_checkbox_rect.collidepoint(sx, sy)
 
+    def is_province_target_suply_minus_point(self, sx: int, sy: int) -> bool:
+        """Return True when a click lands on the province target-supply decrement button."""
+        return self._province_target_suply_minus_rect is not None and self._province_target_suply_minus_rect.collidepoint(sx, sy)
+
+    def is_province_target_suply_plus_point(self, sx: int, sy: int) -> bool:
+        """Return True when a click lands on the province target-supply increment button."""
+        return self._province_target_suply_plus_rect is not None and self._province_target_suply_plus_rect.collidepoint(sx, sy)
+
     def _draw_unit_status_panel(self, unit, panel_x: int, start_y: int, content_w: int, screen_h: int) -> int:
         """Draw a combo box dropdown for unit status selection."""
         self._unit_status_dropdown_rects = []
@@ -1703,12 +1713,16 @@ class Graphics:
         self._province_create_unit_button_rect = None
         self._province_create_logistics_button_rect = None
         self._province_logistics_hub_checkbox_rect = None
+        self._province_target_suply_minus_rect = None
+        self._province_target_suply_plus_rect = None
 
         if not selected_province_id:
             self._people_button_rect = None
             self._province_create_unit_button_rect = None
             self._province_create_logistics_button_rect = None
             self._province_logistics_hub_checkbox_rect = None
+            self._province_target_suply_minus_rect = None
+            self._province_target_suply_plus_rect = None
             return
 
         province = self.game.map.get_province_by_id(selected_province_id)
@@ -1716,6 +1730,8 @@ class Graphics:
             self._province_create_unit_button_rect = None
             self._province_create_logistics_button_rect = None
             self._province_logistics_hub_checkbox_rect = None
+            self._province_target_suply_minus_rect = None
+            self._province_target_suply_plus_rect = None
             return
 
         preview_rect = pygame.Rect(panel_x, panel_y, preview_size, preview_size)
@@ -1743,6 +1759,8 @@ class Graphics:
             self._province_create_unit_button_rect = None
             self._province_create_logistics_button_rect = None
             self._province_logistics_hub_checkbox_rect = None
+            self._province_target_suply_minus_rect = None
+            self._province_target_suply_plus_rect = None
             return
 
         blit_fitted_text(f"Pop: {province_obj.population}", data_y + (line_h * 4))
@@ -1761,10 +1779,33 @@ class Graphics:
         )
         blit_fitted_text(f"Ammo: {province_obj.ammo}", data_y + (line_h * 14))
 
+        target_suply = int(getattr(province_obj, "target_suply", 0) or 0)
+        target_label_y = data_y + (line_h * 15)
+        blit_fitted_text(f"Target Suply: {target_suply}", target_label_y)
+
         can_toggle_hub = self.can_toggle_logistic_hub_in_selected_province(province, province_obj)
         hub_checked = bool(getattr(province_obj, "logistic_hub", False))
         checkbox_size = max(14, min(20, line_h + 2))
-        checkbox_y = data_y + (line_h * 15) + 2
+        target_btn_size = max(18, min(24, line_h + 8))
+        target_btn_y = target_label_y + line_h
+
+        if can_toggle_hub:
+            target_btn_gap = 6
+            target_total_w = (target_btn_size * 2) + target_btn_gap
+            target_btn_x = panel_x + max(0, content_w - target_total_w)
+            self._province_target_suply_minus_rect = pygame.Rect(target_btn_x, target_btn_y, target_btn_size, target_btn_size)
+            self._province_target_suply_plus_rect = pygame.Rect(target_btn_x + target_btn_size + target_btn_gap, target_btn_y, target_btn_size, target_btn_size)
+
+            for rect, label in ((self._province_target_suply_minus_rect, "-"), (self._province_target_suply_plus_rect, "+")):
+                pygame.draw.rect(self.screen, (68, 68, 68), rect, border_radius=3)
+                pygame.draw.rect(self.screen, (130, 130, 130), rect, 1, border_radius=3)
+                sym = self.ui_font.render(label, True, (242, 242, 242))
+                self.screen.blit(sym, sym.get_rect(center=rect.center))
+        else:
+            self._province_target_suply_minus_rect = None
+            self._province_target_suply_plus_rect = None
+
+        checkbox_y = target_btn_y + target_btn_size + 8
 
         if can_toggle_hub:
             self._province_logistics_hub_checkbox_rect = pygame.Rect(panel_x, checkbox_y, checkbox_size, checkbox_size)
@@ -1791,7 +1832,7 @@ class Graphics:
             btn_y = checkbox_y + checkbox_size + 10
         else:
             self._province_logistics_hub_checkbox_rect = None
-            btn_y = data_y + (line_h * 15) + 10
+            btn_y = checkbox_y + checkbox_size + 10
 
         btn_w = max(80, min(130, content_w))
         btn_h = max(24, min(36, line_h * 2))

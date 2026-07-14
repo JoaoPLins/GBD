@@ -158,6 +158,7 @@ class Province:
         #this value is calculated by the level the buildings (warehouse + Mindustry + port + armybase + fort )
         self.maxsuply = 0
         self.suply = 0
+        self.target_suply = 0
 
         #self explanatory; 
         self.fuel = 0
@@ -338,6 +339,12 @@ class Province:
             self.size = 3
         else:
             self.size = 3
+
+    def return_target_suply(self):
+        return self.target_suply
+    
+    def set_target_suply(self, target_suply):
+        self.target_suply = target_suply
 
     def return_buildings(self):
         return self.buildings
